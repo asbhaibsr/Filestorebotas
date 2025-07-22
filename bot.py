@@ -190,8 +190,7 @@ def main() -> None:
 
     # Register handlers
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.Document.ALL | filters.Video.ALL, handle_file))
-
+    application.add_handler(MessageHandler(filters.ATTACHMENT, handle_file))
     print("Bot is running...")
     # Telegram बॉट को पोलिंग मोड में चलाएं
     application.run_polling(allowed_updates=Update.ALL_TYPES)
