@@ -10,9 +10,9 @@ import threading # थ्रेडिंग को इम्पोर्ट क�
 # --- Configuration ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 # Make sure this is your PUBLIC channel's username (without @)
-PUBLIC_CHANNEL_USERNAME = os.getenv("asfilestorechannel")
+PUBLIC_CHANNEL_USERNAME = os.getenv("PUBLIC_CHANNEL_USERNAME")
 # PUBLIC_CHANNEL_ID को हमेशा int में बदलें
-PUBLIC_CHANNEL_ID = int(os.getenv("-1002717243409")) 
+PUBLIC_CHANNEL_ID = int(os.getenv("PUBLIC_CHANNEL_ID")) 
 
 # Your External API (Google Apps Script) base URL
 EXTERNAL_API_BASE_URL = "https://script.google.com/macros/s/AKfycbwDqKLE1bZjwBcNT8wDA2SlKs821Gq7bhea8JOygiHfyPyGuATAKXWY_LtvOwlFwL9n6w/exec"
