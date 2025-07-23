@@ -2,6 +2,8 @@ import os
 import uuid
 import datetime
 import logging 
+import requests # Make sure requests library is imported
+import json     # Make sure json library is imported
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
@@ -25,9 +27,11 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 PUBLIC_CHANNEL_USERNAME = os.getenv("PUBLIC_CHANNEL_USERNAME")
 PUBLIC_CHANNEL_ID = int(os.getenv("PUBLIC_CHANNEL_ID")) 
 
-EXTERNAL_API_BASE_URL = os.getenv("EXTERNAL_API_BASE_URL") 
-
 UPDATES_CHANNEL_LINK = "https://t.me/asbhai_bsr" 
+
+# **महत्वपूर्ण:** अपनी Google Apps Script वेब ऐप का URL यहां डालें
+# यह वही URL है जो आपको Google Apps Script को डिप्लॉय करने के बाद मिला था (Apps Script का doPost/doGet endpoint)
+GOOGLE_APPS_SCRIPT_API_URL = os.getenv("GOOGLE_APPS_SCRIPT_API_URL", "https://script.google.com/macros/s/AKfycbwDqKLE1bZjwBcNT8wDA2SlKs821Gq7bhea8JOygiHfyPyGuATAKXWY_LtvOwlFwL9n6w/exec")
 
 # MongoDB Configuration
 MONGO_URI = os.getenv("MONGO_URI")
@@ -103,9 +107,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 except Exception as e:
                     logger.error(f"Error sending file {original_filename} to user {update.effective_user.id}: {e}")
                     await update.message.reply_text(f"क्षमा करें, फ़ाइल नहीं भेजी जा सकी। एक त्रुटि हुई: {e}")
+                return # Stop execution after sending file or error
             else:
                 logger.warning(f"Invalid or expired token {original_token} requested by user {update.effective_user.id}")
                 await update.message.reply_text("अमान्य या समाप्त डाउनलोड अनुरोध। कृपया पुनः प्रयास करें या एक नई फ़ाइल अपलोड करें।")
+                return # Stop execution if token not found
         else:
             await send_welcome_message(update, context) 
     else:
@@ -298,32 +304,66 @@ async def generate_batch_links(update: Update, context: ContextTypes.DEFAULT_TYP
     links_text = "यहाँ आपकी डाउनलोड लिंक्स हैं:\n\n"
     
     for token in batch_files_in_progress[user_id]:
-        external_api_link = f"{EXTERNAL_API_BASE_URL}?return_to_bot={token}"
-        
-        # डिस्प्ले टेक्स्ट में टोकन के पहले 8 कैरेक्टर को एस्केप करें और "..." को भी
-        display_text = escape_markdown_v2(token[:8]) + escape_markdown_v2("...")
-        
-        # Markdown V2 लिंक फ़ॉर्मेट: [text](<url>) - URL को <> से घेरना सुनिश्चित करें
-        links_text += f"👉 [{display_text}](<{external_api_link}>)\n"
+        file_data = files_collection.find_one({"token": token})
+        if not file_data:
+            logger.warning(f"File data not found for token {token} during batch link generation.")
+            continue # Skip if file data is missing
+
+        original_filename = file_data["original_filename"]
+        permanent_telegram_file_id = file_data["telegram_file_id"]
+
+        try:
+            # Apps Script doPost को कॉल करने के लिए पेलोड
+            apps_script_payload = {
+                "movie_name": original_filename, # Apps Script के लिए filename को movie name के रूप में उपयोग करें
+                "telegram_link": permanent_telegram_file_id # Apps Script के लिए वास्तविक फ़ाइल ID
+            }
+            headers = {'Content-Type': 'application/json'}
+
+            # Google Apps Script API पर POST रिक्वेस्ट करें
+            response = requests.post(GOOGLE_APPS_SCRIPT_API_URL, data=json.dumps(apps_script_payload), headers=headers)
+            response.raise_for_status() # खराब प्रतिक्रियाओं (4xx या 5xx) के लिए HTTPError उत्पन्न करें
+            
+            apps_script_result = response.json()
+
+            if apps_script_result.get('status') == 'success' and apps_script_result.get('redirect_to_blogger_url'):
+                blogger_redirect_url = apps_script_result['redirect_to_blogger_url']
+                display_text = escape_markdown_v2(original_filename[:20]) + escape_markdown_v2("...") # डिस्प्ले के लिए filename को छोटा करें
+                links_text += f"👉 [{display_text}](<{blogger_redirect_url}>)\n"
+            else:
+                logger.error(f"Apps Script doPost failed for {original_filename}: {apps_script_result.get('message', 'Unknown error')}")
+                links_text += f"👉 {escape_markdown_v2(original_filename)}: लिंक जनरेट करने में त्रुटि।\n"
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error calling Google Apps Script API for {original_filename}: {e}")
+            links_text += f"👉 {escape_markdown_v2(original_filename)}: API त्रुटि।\n"
     
     try:
         await update.callback_query.message.reply_text(
             links_text, 
             parse_mode='MarkdownV2', 
-            disable_web_page_preview=True # ताकि Telegram लिंक का प्रीव्यू न बनाए
+            disable_web_page_preview=True
         )
         logger.info(f"Batch links sent to user {user_id}")
     except telegram.error.BadRequest as e:
         logger.error(f"Error sending MarkdownV2 batch links to user {user_id}: {e}")
         # यदि अभी भी कोई पार्सिंग एरर आती है, तो बिना Markdown के भेजें
-        fallback_links_text = "लिंक जनरेट करने में समस्या हुई। यहाँ रॉ लिंक्स हैं (कृपया मैन्युअल रूप से कॉपी करें):\n\n" + \
-                              "\n".join([f"👉 {EXTERNAL_API_BASE_URL}?return_to_bot={t}" 
-                                         for t in batch_files_in_progress[user_id]])
+        fallback_links_text = "लिंक जनरेट करने में समस्या हुई। यहाँ रॉ लिंक्स हैं (कृपया मैन्युअल रूप से कॉपी करें):\n\n"
+        for token in batch_files_in_progress[user_id]:
+            file_data = files_collection.find_one({"token": token})
+            if file_data:
+                # यहां हमें Apps Script से ब्लॉगर URL को फिर से प्राप्त करने की आवश्यकता होगी
+                # या इसे MongoDB में सहेजना होगा जब Apps Script doPost को कॉल किया जाता है।
+                # सरलता के लिए, हम मान रहे हैं कि Apps Script URL सीधे काम करेगा,
+                # लेकिन यह ब्लॉगर URL + token होना चाहिए।
+                # यह एक बेहतर फॉलबैक के लिए एक और Apps Script कॉल या DB से पुनर्प्राप्ति की आवश्यकता होगी।
+                # अभी के लिए, हम एक जेनेरिक मैसेज दे रहे हैं।
+                fallback_links_text += f"👉 {file_data['original_filename']}: कृपया बॉट से फिर से लिंक जनरेट करें।\n"
         await update.callback_query.message.reply_text(fallback_links_text)
     
-    del batch_files_in_progress[user_id] # बैच क्लियर करें
-    context.user_data.pop('current_mode', None) # मोड क्लियर करें
-    return ConversationHandler.END # बातचीत खत्म करें
+    del batch_files_in_progress[user_id]
+    context.user_data.pop('current_mode', None)
+    return ConversationHandler.END
 
 async def cancel_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     logger.info(f"Batch cancelled by {update.effective_user.id}")
@@ -406,10 +446,36 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     files_collection.insert_one(file_info)
     logger.info(f"Single file {original_filename} (token: {unique_token}) saved to MongoDB.")
 
-    external_api_link = f"{EXTERNAL_API_BASE_URL}?return_to_bot={unique_token}"
+    # **महत्वपूर्ण बदलाव यहाँ:** Google Apps Script doPost को कॉल करें
+    try:
+        # Apps Script doPost के लिए पेलोड
+        apps_script_payload = {
+            "movie_name": original_filename, # Apps Script के लिए filename को movie name के रूप में उपयोग करें
+            "telegram_link": permanent_telegram_file_id # Apps Script के लिए वास्तविक फ़ाइल ID
+        }
+        headers = {'Content-Type': 'application/json'}
+
+        # Google Apps Script API पर POST रिक्वेस्ट करें
+        response = requests.post(GOOGLE_APPS_SCRIPT_API_URL, data=json.dumps(apps_script_payload), headers=headers)
+        response.raise_for_status() # खराब प्रतिक्रियाओं (4xx या 5xx) के लिए HTTPError उत्पन्न करें
+        
+        apps_script_result = response.json()
+
+        if apps_script_result.get('status') == 'success' and apps_script_result.get('redirect_to_blogger_url'):
+            final_link_for_user = apps_script_result['redirect_to_blogger_url']
+            logger.info(f"Apps Script returned Blogger redirect URL: {final_link_for_user}")
+        else:
+            logger.error(f"Apps Script doPost failed: {apps_script_result.get('message', 'Unknown error')}")
+            await update.message.reply_text(f"लिंक जनरेट करने में त्रुटि: {apps_script_result.get('message', 'अज्ञात त्रुटि')}")
+            return # Apps Script कॉल विफल होने पर यहीं रुकें
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error calling Google Apps Script API from bot: {e}")
+        await update.message.reply_text(f"माफ करें, इस समय लिंक जनरेट नहीं हो पा रहा है। कृपया कुछ देर बाद पुनः प्रयास करें। (API त्रुटि: {e})")
+        return # API कॉल विफल होने पर यहीं रुकें
     
     keyboard = [
-        [InlineKeyboardButton("फ़ाइल डाउनलोड करें", url=external_api_link)],
+        [InlineKeyboardButton("फ़ाइल डाउनलोड करें", url=final_link_for_user)],
         [InlineKeyboardButton("फ़ाइल कैसे डाउनलोड करें", url="https://google.com")] # <-- इस URL को अपनी वास्तविक मदद पेज लिंक से बदलें!
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -423,7 +489,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 def main() -> None:
     # सुनिश्चित करें कि सभी आवश्यक पर्यावरण चर सेट हैं
-    required_env_vars = ["TELEGRAM_BOT_TOKEN", "MONGO_URI", "PUBLIC_CHANNEL_USERNAME", "PUBLIC_CHANNEL_ID", "EXTERNAL_API_BASE_URL"]
+    required_env_vars = ["TELEGRAM_BOT_TOKEN", "MONGO_URI", "PUBLIC_CHANNEL_USERNAME", "PUBLIC_CHANNEL_ID", "GOOGLE_APPS_SCRIPT_API_URL"]
     for var in required_env_vars:
         if not os.getenv(var):
             logger.error(f"त्रुटि: आवश्यक पर्यावरण चर '{var}' गायब है। कृपया इसे सेट करें।")
