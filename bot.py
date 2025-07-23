@@ -295,7 +295,7 @@ async def generate_batch_links(update: Update, context: ContextTypes.DEFAULT_TYP
 
             if apps_script_result.get('status') == 'success' and apps_script_result.get('redirect_to_blogger_url'):
                 blogger_redirect_url = apps_script_result['redirect_to_blogger_url']
-                display_text = escape_markdown_v2(original_filename[:20]) + escape_markdown_v2("...") 
+                display_text = escape_markdown_v2(original_filename) # पूरा नाम दिखाएं
                 links_text += f"👉 [{display_text}](<{blogger_redirect_url}>)\n"
             else:
                 logger.error(f"Apps Script doPost failed for {original_filename}: {apps_script_result.get('message', 'Unknown error')}")
