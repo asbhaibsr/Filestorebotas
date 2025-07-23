@@ -488,6 +488,7 @@ async def copy_link_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.answer("लिंक कॉपी करने के लिए तैयार...")
 
     data = query.data
+    apps_script_url = ""
     if data.startswith("copy_batch_link_"):
         batch_id = data[len("copy_batch_link_"):]
         apps_script_url = f"{GOOGLE_APPS_SCRIPT_API_URL}?batch_token={batch_id}"
@@ -590,7 +591,7 @@ async def dellink_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 def main() -> None:
-    required_env_vars = ["TELEGRAM_BOT_TOKEN", "MONGO_URI", "PUBLIC_CHANNEL_USERNAME", "PUBLIC_CHANNEL_ID", "GOOGLE_APPS_SCRIPT_API_URL", "ADMIN_USER_ID"] # ADMIN_USER_ID जोड़ा गया
+    required_env_vars = ["TELEGRAM_BOT_TOKEN", "MONGO_URI", "PUBLIC_CHANNEL_USERNAME", "PUBLIC_CHANNEL_ID", "GOOGLE_APPS_SCRIPT_API_URL", "ADMIN_USER_ID"] 
     for var in required_env_vars:
         if not os.getenv(var):
             logger.error(f"त्रुटि: आवश्यक पर्यावरण चर '{var}' गायब है। कृपया इसे सेट करें।")
