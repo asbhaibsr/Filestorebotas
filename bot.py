@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 
 # --- Configuration ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-PUBLIC_CHANNEL_USERNAME = os.getenv("PUBLIC_CHANNEL_USERNAME") # <-- यह वेरिएबल आपके बॉट का यूजरनेम रखता है
-PUBLIC_CHANNEL_ID = int(os.getenv("PUBLIC_CHANNEL_ID")) 
+PUBLIC_CHANNEL_USERNAME = os.getenv("PUBLIC_CHANNEL_USERNAME") # <-- यह वेरिएबल आपके बॉट का यूजरनेम रखता है (जैसे 'istreamfilestorebot')
+PUBLIC_CHANNEL_ID = int(os.getenv("PUBLIC_CHANNEL_ID")) # <-- यह वह चैनल ID है जहाँ फ़ाइलें फ़ॉरवर्ड की जाएंगी (जैसे -1001234567890)
 
 UPDATES_CHANNEL_LINK = "https://t.me/asbhai_bsr" 
 
@@ -226,7 +226,7 @@ async def handle_batch_file_received(update: Update, context: ContextTypes.DEFAU
 
     try:
         sent_message = await context.bot.forward_message(
-            chat_id=PUBLIC_CHANNEL_ID,
+            chat_id=PUBLIC_CHANNEL_ID, 
             from_chat_id=user_chat_id,
             message_id=update.message.message_id
         )
@@ -250,17 +250,17 @@ async def handle_batch_file_received(update: Update, context: ContextTypes.DEFAU
     permanent_token = str(uuid.uuid4())
 
     file_info = {
-        "token": permanent_token, # अब यह स्थायी टोकन है
+        "token": permanent_token, 
         "telegram_file_id": permanent_telegram_file_id,
         "original_filename": original_filename,
         "user_chat_id": user_chat_id,
-        "upload_time": datetime.datetime.now(), # यह केवल रिकॉर्ड के लिए है, समाप्ति के लिए नहीं
+        "upload_time": datetime.datetime.now(), 
         "file_type": file_type
     }
     files_collection.insert_one(file_info)
     logger.info(f"File {original_filename} (permanent token: {permanent_token}) saved to MongoDB.")
 
-    batch_files_in_progress[user_id].append(permanent_token) # बैच के लिए स्थायी टोकन स्टोर करें
+    batch_files_in_progress[user_id].append(permanent_token) 
 
     keyboard = [[InlineKeyboardButton("लिंक जनरेट करें", callback_data="generate_batch_links")]]
     keyboard.append([InlineKeyboardButton("रद्द करें", callback_data="cancel_batch_generation")]) 
@@ -287,7 +287,7 @@ async def generate_batch_links(update: Update, context: ContextTypes.DEFAULT_TYP
     
     links_text = "यहाँ आपकी डाउनलोड लिंक्स हैं:\n\n"
     
-    for permanent_token in batch_files_in_progress[user_id]: # स्थायी टोकन पर लूप करें
+    for permanent_token in batch_files_in_progress[user_id]: 
         file_data = files_collection.find_one({"token": permanent_token})
         if not file_data:
             logger.warning(f"File data not found for permanent token {permanent_token} during batch link generation.")
@@ -295,12 +295,11 @@ async def generate_batch_links(update: Update, context: ContextTypes.DEFAULT_TYP
 
         original_filename = file_data["original_filename"]
 
-        # स्थायी Telegram डीप लिंक बनाएं
-        # TELEGRAM_BOT_USERNAME के बजाय PUBLIC_CHANNEL_USERNAME का उपयोग करें
-        permanent_telegram_deep_link = f"https://t.me/{PUBLIC_CHANNEL_USERNAME}?start={permanent_token}"
+        # Apps Script URL बनाएं जो ब्लॉगर पर रीडायरेक्ट करेगा
+        apps_script_redirect_url = f"{GOOGLE_APPS_SCRIPT_API_URL}?token={permanent_token}"
         
         display_text = escape_markdown_v2(original_filename) 
-        links_text += f"👉 [{display_text}](<{permanent_telegram_deep_link}>)\n"
+        links_text += f"👉 [{display_text}](<{apps_script_redirect_url}>)\n"
 
     try:
         await update.callback_query.message.reply_text(
@@ -315,8 +314,7 @@ async def generate_batch_links(update: Update, context: ContextTypes.DEFAULT_TYP
         for permanent_token in batch_files_in_progress[user_id]:
             file_data = files_collection.find_one({"token": permanent_token})
             if file_data:
-                # TELEGRAM_BOT_USERNAME के बजाय PUBLIC_CHANNEL_USERNAME का उपयोग करें
-                fallback_links_text += f"👉 {file_data['original_filename']}: https://t.me/{PUBLIC_CHANNEL_USERNAME}?start={permanent_token}\n"
+                fallback_links_text += f"👉 {file_data['original_filename']}: {GOOGLE_APPS_SCRIPT_API_URL}?token={permanent_token}\n"
         await update.callback_query.message.reply_text(fallback_links_text)
     
     del batch_files_in_progress[user_id]
@@ -367,7 +365,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     try:
         sent_message = await context.bot.forward_message(
-            chat_id=PUBLIC_CHANNEL_ID,
+            chat_id=PUBLIC_CHANNEL_ID, 
             from_chat_id=user_chat_id,
             message_id=update.message.message_id
         )
@@ -391,23 +389,22 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     permanent_token = str(uuid.uuid4())
 
     file_info = {
-        "token": permanent_token, # अब यह स्थायी टोकन है
+        "token": permanent_token, 
         "telegram_file_id": permanent_telegram_file_id,
         "original_filename": original_filename,
         "user_chat_id": user_chat_id,
-        "upload_time": datetime.datetime.now(), # यह केवल रिकॉर्ड के लिए है, समाप्ति के लिए नहीं
+        "upload_time": datetime.datetime.now(), 
         "file_type": file_type
     }
     files_collection.insert_one(file_info)
     logger.info(f"Single file {original_filename} (permanent token: {permanent_token}) saved to MongoDB.")
 
-    # अब सीधे स्थायी Telegram डीप लिंक बनाएं
-    # TELEGRAM_BOT_USERNAME के बजाय PUBLIC_CHANNEL_USERNAME का उपयोग करें
-    permanent_telegram_deep_link = f"https://t.me/{PUBLIC_CHANNEL_USERNAME}?start={permanent_token}"
-    logger.info(f"Generated permanent Telegram deep link: {permanent_telegram_deep_link}")
+    # अब Apps Script URL बनाएं जो ब्लॉगर पर रीडायरेक्ट करेगा
+    apps_script_redirect_url = f"https://script.google.com/macros/s/AKfycbwDqKLE1bZjwBcNT8wDA2SlKs821Gq7bhea8JOygiHfyPyGuATAKXWY_LtvOwlFwL9n6w/exec?token={permanent_token}" 
+    logger.info(f"Generated Apps Script redirect URL for Blogger: {apps_script_redirect_url}")
     
     keyboard = [
-        [InlineKeyboardButton("फ़ाइल डाउनलोड करें", url=permanent_telegram_deep_link)],
+        [InlineKeyboardButton("फ़ाइल डाउनलोड करें", url=apps_script_redirect_url)], # <-- अब यह Apps Script URL है
         [InlineKeyboardButton("फ़ाइल कैसे डाउनलोड करें", url="https://google.com")] 
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
