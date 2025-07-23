@@ -30,7 +30,7 @@ PUBLIC_CHANNEL_ID = int(os.getenv("PUBLIC_CHANNEL_ID"))
 UPDATES_CHANNEL_LINK = "https://t.me/asbhai_bsr" 
 
 # **महत्वपूर्ण:** अपनी Google Apps Script वेब ऐप का URL यहां डालें
-# यह वही URL है जो आपको Google Apps Script को डिप्लॉय करने के बाद मिला था (Apps Script का doPost/doGet endpoint)
+# यह वही URL है जो आपको Google Apps Script को डिप्लॉय करने के बाद मिला था (Apps Script का doGet endpoint)
 GOOGLE_APPS_SCRIPT_API_URL = os.getenv("GOOGLE_APPS_SCRIPT_API_URL", "https://script.google.com/macros/s/AKfycbwDqKLE1bZjwBcNT8wDA2SlKs821Gq7bhea8JOygiHfyPyGuATAKXWY_LtvOwlFwL9n6w/exec") 
 # सुनिश्चित करें कि यह Apps Script का नया डिप्लॉयमेंट URL है!
 
@@ -65,8 +65,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if args:
         param = args[0]
         if param.startswith("download_"):
+            # यह तब होता है जब यूजर ब्लॉगर पेज पर सत्यापन के बाद वापस बॉट पर रीडायरेक्ट होता है।
             original_permanent_token = param[len("download_"):]
-            logger.info(f"Download deep link received for permanent token: {original_permanent_token}")
+            logger.info(f"Download deep link received for permanent token after verification: {original_permanent_token}")
             
             file_data = files_collection.find_one({"token": original_permanent_token})
 
@@ -93,11 +94,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     await update.message.reply_text(f"क्षमा करें, फ़ाइल नहीं भेजी जा सकी। एक त्रुटि हुई: {e}")
                 return 
             else:
-                logger.warning(f"Invalid permanent token {original_permanent_token} requested by user {update.effective_user.id}")
+                logger.warning(f"Invalid permanent token {original_permanent_token} requested by user {update.effective_user.id} after verification.")
                 await update.message.reply_text("अमान्य या समाप्त डाउनलोड अनुरोध। कृपया पुनः प्रयास करें या एक नई फ़ाइल अपलोड करें।")
                 return 
         else:
-            await send_welcome_message(update, context) 
+            # यह तब होता है जब यूजर स्थायी Telegram डीप लिंक पर क्लिक करता है (पहली बार)
+            permanent_token_from_deep_link = param 
+            logger.info(f"Initial permanent deep link received: {permanent_token_from_deep_link}")
+
+            # Apps Script के doGet को कॉल करें जो ब्लॉगर पर रीडायरेक्ट करेगा
+            apps_script_redirect_url = f"{GOOGLE_APPS_SCRIPT_API_URL}?token={permanent_token_from_deep_link}"
+            logger.info(f"Redirecting user to Apps Script for Blogger: {apps_script_redirect_url}")
+
+            keyboard = [[InlineKeyboardButton("जारी रखें", url=apps_script_redirect_url)]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(
+                "आपकी फ़ाइल तैयार है! कृपया सत्यापन के लिए जारी रखें बटन पर क्लिक करें।",
+                reply_markup=reply_markup
+            )
+            return 
     else:
         await send_welcome_message(update, context)
 
@@ -280,31 +295,12 @@ async def generate_batch_links(update: Update, context: ContextTypes.DEFAULT_TYP
 
         original_filename = file_data["original_filename"]
 
-        try:
-            # Apps Script doPost को कॉल करने के लिए पेलोड
-            apps_script_payload = {
-                "permanent_token": permanent_token, # Apps Script को स्थायी टोकन भेजें
-                "original_filename": original_filename 
-            }
-            headers = {'Content-Type': 'application/json'}
+        # स्थायी Telegram डीप लिंक बनाएं
+        permanent_telegram_deep_link = f"https://t.me/{TELEGRAM_BOT_USERNAME}?start={permanent_token}"
+        
+        display_text = escape_markdown_v2(original_filename) 
+        links_text += f"👉 [{display_text}](<{permanent_telegram_deep_link}>)\n"
 
-            response = requests.post(GOOGLE_APPS_SCRIPT_API_URL, data=json.dumps(apps_script_payload), headers=headers)
-            response.raise_for_status() 
-            
-            apps_script_result = response.json()
-
-            if apps_script_result.get('status') == 'success' and apps_script_result.get('redirect_to_blogger_url'):
-                blogger_redirect_url = apps_script_result['redirect_to_blogger_url']
-                display_text = escape_markdown_v2(original_filename) # पूरा नाम दिखाएं
-                links_text += f"👉 [{display_text}](<{blogger_redirect_url}>)\n"
-            else:
-                logger.error(f"Apps Script doPost failed for {original_filename}: {apps_script_result.get('message', 'Unknown error')}")
-                links_text += f"👉 {escape_markdown_v2(original_filename)}: लिंक जनरेट करने में त्रुटि।\n"
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error calling Google Apps Script API for {original_filename}: {e}")
-            links_text += f"👉 {escape_markdown_v2(original_filename)}: API त्रुटि।\n"
-    
     try:
         await update.callback_query.message.reply_text(
             links_text, 
@@ -318,7 +314,7 @@ async def generate_batch_links(update: Update, context: ContextTypes.DEFAULT_TYP
         for permanent_token in batch_files_in_progress[user_id]:
             file_data = files_collection.find_one({"token": permanent_token})
             if file_data:
-                fallback_links_text += f"👉 {file_data['original_filename']}: कृपया बॉट से फिर से लिंक जनरेट करें।\n"
+                fallback_links_text += f"👉 {file_data['original_filename']}: https://t.me/{TELEGRAM_BOT_USERNAME}?start={permanent_token}\n"
         await update.callback_query.message.reply_text(fallback_links_text)
     
     del batch_files_in_progress[user_id]
@@ -403,34 +399,12 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     files_collection.insert_one(file_info)
     logger.info(f"Single file {original_filename} (permanent token: {permanent_token}) saved to MongoDB.")
 
-    # Google Apps Script doPost को कॉल करें
-    try:
-        apps_script_payload = {
-            "permanent_token": permanent_token, # Apps Script को स्थायी टोकन भेजें
-            "original_filename": original_filename 
-        }
-        headers = {'Content-Type': 'application/json'}
-
-        response = requests.post(GOOGLE_APPS_SCRIPT_API_URL, data=json.dumps(apps_script_payload), headers=headers)
-        response.raise_for_status() 
-        
-        apps_script_result = response.json()
-
-        if apps_script_result.get('status') == 'success' and apps_script_result.get('redirect_to_blogger_url'):
-            final_link_for_user = apps_script_result['redirect_to_blogger_url']
-            logger.info(f"Apps Script returned Blogger redirect URL: {final_link_for_user}")
-        else:
-            logger.error(f"Apps Script doPost failed: {apps_script_result.get('message', 'Unknown error')}")
-            await update.message.reply_text(f"लिंक जनरेट करने में त्रुटि: {apps_script_result.get('message', 'अज्ञात त्रुटि')}")
-            return 
-
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error calling Google Apps Script API from bot: {e}")
-        await update.message.reply_text(f"माफ करें, इस समय लिंक जनरेट नहीं हो पा रहा है। कृपया कुछ देर बाद पुनः प्रयास करें। (API त्रुटि: {e})")
-        return 
+    # अब सीधे स्थायी Telegram डीप लिंक बनाएं
+    permanent_telegram_deep_link = f"https://t.me/{TELEGRAM_BOT_USERNAME}?start={permanent_token}"
+    logger.info(f"Generated permanent Telegram deep link: {permanent_telegram_deep_link}")
     
     keyboard = [
-        [InlineKeyboardButton("फ़ाइल डाउनलोड करें", url=final_link_for_user)],
+        [InlineKeyboardButton("फ़ाइल डाउनलोड करें", url=permanent_telegram_deep_link)],
         [InlineKeyboardButton("फ़ाइल कैसे डाउनलोड करें", url="https://google.com")] 
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
