@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # --- Configuration ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-PUBLIC_CHANNEL_USERNAME = os.getenv("PUBLIC_CHANNEL_USERNAME")
+PUBLIC_CHANNEL_USERNAME = os.getenv("PUBLIC_CHANNEL_USERNAME") # <-- यह वेरिएबल आपके बॉट का यूजरनेम रखता है
 PUBLIC_CHANNEL_ID = int(os.getenv("PUBLIC_CHANNEL_ID")) 
 
 UPDATES_CHANNEL_LINK = "https://t.me/asbhai_bsr" 
@@ -296,7 +296,8 @@ async def generate_batch_links(update: Update, context: ContextTypes.DEFAULT_TYP
         original_filename = file_data["original_filename"]
 
         # स्थायी Telegram डीप लिंक बनाएं
-        permanent_telegram_deep_link = f"https://t.me/{TELEGRAM_BOT_USERNAME}?start={permanent_token}"
+        # TELEGRAM_BOT_USERNAME के बजाय PUBLIC_CHANNEL_USERNAME का उपयोग करें
+        permanent_telegram_deep_link = f"https://t.me/{PUBLIC_CHANNEL_USERNAME}?start={permanent_token}"
         
         display_text = escape_markdown_v2(original_filename) 
         links_text += f"👉 [{display_text}](<{permanent_telegram_deep_link}>)\n"
@@ -314,7 +315,8 @@ async def generate_batch_links(update: Update, context: ContextTypes.DEFAULT_TYP
         for permanent_token in batch_files_in_progress[user_id]:
             file_data = files_collection.find_one({"token": permanent_token})
             if file_data:
-                fallback_links_text += f"👉 {file_data['original_filename']}: https://t.me/{TELEGRAM_BOT_USERNAME}?start={permanent_token}\n"
+                # TELEGRAM_BOT_USERNAME के बजाय PUBLIC_CHANNEL_USERNAME का उपयोग करें
+                fallback_links_text += f"👉 {file_data['original_filename']}: https://t.me/{PUBLIC_CHANNEL_USERNAME}?start={permanent_token}\n"
         await update.callback_query.message.reply_text(fallback_links_text)
     
     del batch_files_in_progress[user_id]
@@ -400,7 +402,8 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     logger.info(f"Single file {original_filename} (permanent token: {permanent_token}) saved to MongoDB.")
 
     # अब सीधे स्थायी Telegram डीप लिंक बनाएं
-    permanent_telegram_deep_link = f"https://t.me/{TELEGRAM_BOT_USERNAME}?start={permanent_token}"
+    # TELEGRAM_BOT_USERNAME के बजाय PUBLIC_CHANNEL_USERNAME का उपयोग करें
+    permanent_telegram_deep_link = f"https://t.me/{PUBLIC_CHANNEL_USERNAME}?start={permanent_token}"
     logger.info(f"Generated permanent Telegram deep link: {permanent_telegram_deep_link}")
     
     keyboard = [
