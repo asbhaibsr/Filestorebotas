@@ -76,9 +76,12 @@ async def update_user_info(user_id: int, username: str, first_name: str):
 # --- MarkdownV2 escaping helper ---
 def escape_markdown_v2(text: str) -> str:
     # Telegram MarkdownV2 special characters that need to be escaped
-    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    # Added backslash escape for '!' and '-' which caused recent errors.
+    # Added '\' for general safety within code blocks.
+    escape_chars = r'_*[]()~`>#+-=|{}.!\ ' # Space also needs to be escaped for pre/code blocks
     # Escape each special character with a backslash
     return ''.join(['\\' + char if char in escape_chars else char for char in text])
+
 
 # --- Bot Handlers ---
 
@@ -116,10 +119,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                             # Escape original_filename for MarkdownV2 in caption
                             escaped_filename = escape_markdown_v2(original_filename)
 
+                            caption_text_template = (
+                                f"यहाँ आपकी फ़ाइल है: `{escaped_filename}`\n\n"
+                                f"कॉपीराइट मुद्दों से बचने के लिए, कृपया इस फ़ाइल को कहीं और फॉरवर्ड करें या डाउनलोड करें। "
+                                f"यह फ़ाइल 2 मिनट में ऑटो\-डिलीट हो जाएगी।" # '\-' for hyphen
+                            )
+
                             if file_data.get("file_type") == "video":
+                                caption_text = caption_text_template.replace("यहाँ आपकी फ़ाइल है:", "यहाँ आपकी वीडियो है:")
                                 sent_msg = await update.message.reply_video(
                                     video=telegram_file_id,
-                                    caption=f"यहाँ आपकी वीडियो है: `{escaped_filename}`\n\nकॉपीराइट मुद्दों से बचने के लिए, कृपया इस फ़ाइल को कहीं और फॉरवर्ड करें या डाउनलोड करें। यह फ़ाइल 2 मिनट में ऑटो-डिलीट हो जाएगी।",
+                                    caption=caption_text,
                                     filename=original_filename,
                                     parse_mode='MarkdownV2',
                                     reply_markup=forward_keyboard
@@ -127,7 +137,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                             else: # assume it's a document/photo/apk
                                 sent_msg = await update.message.reply_document(
                                     document=telegram_file_id,
-                                    caption=f"यहाँ आपकी फ़ाइल है: `{escaped_filename}`\n\nकॉपीराइट मुद्दों से बचने के लिए, कृपया इस फ़ाइल को कहीं और फॉरवर्ड करें या डाउनलोड करें। यह फ़ाइल 2 मिनट में ऑटो-डिलीट हो जाएगी।",
+                                    caption=caption_text_template,
                                     filename=original_filename,
                                     parse_mode='MarkdownV2',
                                     reply_markup=forward_keyboard
@@ -136,9 +146,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                             logger.info(f"Batch file {original_filename} sent to user {user.id}")
                         except Exception as e:
                             logger.error(f"Error sending batch file {original_filename} to user {user.id}: {e}")
-                            await update.message.reply_text(f"क्षमा करें, बैच फ़ाइल `{escaped_filename}` नहीं भेजी जा सकी। एक त्रुटि हुई: `{e}`")
+                            # Escape the error message itself
+                            await update.message.reply_text(f"क्षमा करें, बैच फ़ाइल `{escaped_filename}` नहीं भेजी जा सकी। एक त्रुटि हुई: `{escape_markdown_v2(str(e))}`")
                     else:
-                        await update.message.reply_text(f"क्षमा करें, बैच में एक फ़ाइल के लिए डेटा नहीं मिला: `{token}`")
+                        await update.message.reply_text(f"क्षमा करें, बैच में एक फ़ाइल के लिए डेटा नहीं मिला: `{escape_markdown_v2(token)}`")
 
                 await update.message.reply_text("सभी बैच फ़ाइलें भेजी गईं!")
 
@@ -178,19 +189,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     # Escape original_filename for MarkdownV2 in caption
                     escaped_filename = escape_markdown_v2(original_filename)
 
+                    caption_text_template = (
+                        f"यहाँ आपकी फ़ाइल है: `{escaped_filename}`\n\n"
+                        f"कॉपीराइट मुद्दों से बचने के लिए, कृपया इस फ़ाइल को कहीं और फॉरवर्ड करें या डाउनलोड करें। "
+                        f"यह फ़ाइल 2 मिनट में ऑटो\-डिलीट हो जाएगी।" # '\-' for hyphen
+                    )
+
                     if file_data.get("file_type") == "video":
+                        caption_text = caption_text_template.replace("यहाँ आपकी फ़ाइल है:", "यहाँ आपकी वीडियो है:")
                         sent_msg = await update.message.reply_video(
                             video=telegram_file_id,
-                            caption=f"यहाँ आपकी वीडियो है: `{escaped_filename}`\n\nकॉपीराइट मुद्दों से बचने के लिए, कृपया इस फ़ाइल को कहीं और फॉरवर्ड करें या डाउनलोड करें। यह फ़ाइल 2 मिनट में ऑटो-डिलीट हो जाएगी।",
+                            caption=caption_text,
                             filename=original_filename,
                             parse_mode='MarkdownV2',
                             reply_markup=forward_keyboard
                         )
                         logger.info(f"Video {original_filename} sent to user {user.id}")
-                    else: # assume it's a document/photo/apk
+                    else: # assume it's a document/photo/apk/photo
                         sent_msg = await update.message.reply_document(
                             document=telegram_file_id,
-                            caption=f"यहाँ आपकी फ़ाइल है: `{escaped_filename}`\n\nकॉपीराइट मुद्दों से बचने के लिए, कृपया इस फ़ाइल को कहीं और फॉरवर्ड करें या डाउनलोड करें। यह फ़ाइल 2 मिनट में ऑटो-डिलीट हो जाएगी।",
+                            caption=caption_text_template,
                             filename=original_filename,
                             parse_mode='MarkdownV2',
                             reply_markup=forward_keyboard
@@ -207,6 +225,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
                 except Exception as e:
                     logger.error(f"Error sending file {original_filename} to user {user.id}: {e}")
+                    # Escape the error message itself
                     await update.message.reply_text(f"क्षमा करें, फ़ाइल नहीं भेजी जा सकी। एक त्रुटि हुई: `{escape_markdown_v2(str(e))}`")
                 return
             else:
@@ -227,12 +246,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             keyboard = [[InlineKeyboardButton("जारी रखें", url=apps_script_redirect_url)]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(
-                "आपकी फ़ाइल तैयार है! कृपया सत्यापन के लिए जारी रखें बटन पर क्लिक करें।",
+                "आपकी फ़ाइल तैयार है! कृपया सत्यापन के लिए 'जारी रखें' बटन पर क्लिक करें।",
                 reply_markup=reply_markup
             )
             return
     else:
+        # If no arguments, send the regular welcome message
         await send_welcome_message(update, context)
+
 
 async def send_welcome_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info("Sending welcome message.")
@@ -240,8 +261,8 @@ async def send_welcome_message(update: Update, context: ContextTypes.DEFAULT_TYP
     # बॉट का नाम और फोटो
     bot_name = "आपका फाइल स्टोर बॉट" # आप यहां अपने बॉट का नाम बदल सकते हैं
     welcome_text = (
-        f"👋 नमस्ते! मैं **{escape_markdown_v2(bot_name)}** हूँ, आपका फ़ाइल साझा करने वाला बॉट। "
-        "मैं आपकी फ़ाइलों के लिए साझा करने योग्य लिंक बनाने में आपकी मदद कर सकता हूँ।"
+        f"👋 नमस्ते\! मैं **{escape_markdown_v2(bot_name)}** हूँ, आपका फ़ाइल साझा करने वाला बॉट\. " # Added \! for exclamation
+        f"मैं आपकी फ़ाइलों के लिए साझा करने योग्य लिंक बनाने में आपकी मदद कर सकता हूँ\." # Added \. for full stop
     )
 
     keyboard = [
@@ -250,14 +271,23 @@ async def send_welcome_message(update: Update, context: ContextTypes.DEFAULT_TYP
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
+    # Use reply_photo/reply_text directly from update.message or edit_message_text for callback_query
     if update.message:
         if START_PHOTO_URL:
-            await update.message.reply_photo(
-                photo=START_PHOTO_URL,
-                caption=welcome_text,
-                reply_markup=reply_markup,
-                parse_mode='MarkdownV2'
-            )
+            try:
+                await update.message.reply_photo(
+                    photo=START_PHOTO_URL,
+                    caption=welcome_text,
+                    reply_markup=reply_markup,
+                    parse_mode='MarkdownV2'
+                )
+            except Exception as e:
+                logger.error(f"Error sending welcome photo: {e}")
+                await update.message.reply_text(
+                    welcome_text,
+                    reply_markup=reply_markup,
+                    parse_mode='MarkdownV2'
+                )
         else:
             await update.message.reply_text(
                 welcome_text,
@@ -278,12 +308,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     logger.info("Help command received.")
     help_text = (
         "यहाँ वे कमांड दिए गए हैं जिनका आप उपयोग कर सकते हैं:\n\n"
-        "➡️ /start - स्वागत संदेश प्राप्त करें।\n"
-        "➡️ /link - एक फ़ाइल के लिए साझा करने योग्य लिंक प्राप्त करें।\n"
-        "➡️ /batch - एक साथ कई फ़ाइलों के लिए लिंक जनरेट करें।\n"
-        "➡️ /mylink - आपके द्वारा जनरेट की गई लिंक्स की संख्या देखें।\n\n"
-        "कमांड `/link` या `/batch` का उपयोग करने के बाद मुझे कोई भी डॉक्यूमेंट या वीडियो भेजें।"
+        "➡️ /start \\- स्वागत संदेश प्राप्त करें\\.\n" # Escaped .
+        "➡️ /link \\- एक फ़ाइल के लिए साझा करने योग्य लिंक प्राप्त करें\\.\n" # Escaped .
+        "➡️ /batch \\- एक साथ कई फ़ाइलों के लिए लिंक जनरेट करें\\.\n" # Escaped .
+        "➡️ /mylink \\- आपके द्वारा जनरेट की गई लिंक्स की संख्या देखें\\.\n\n" # Escaped .
+        "कमांड `/link` या `/batch` का उपयोग करने के बाद मुझे कोई भी डॉक्यूमेंट या वीडियो भेजें\\." # Escaped .
     )
+    # Escape the entire help_text before sending
+    escaped_help_text = help_text # No need to re-escape if already done manually where needed. Let's make sure it's correct.
 
     if update.callback_query:
         await update.callback_query.answer()
@@ -293,12 +325,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await context.bot.edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
-            text=help_text,
+            text=help_text, # Use manually escaped text
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("पीछे", callback_data="back_to_welcome")]])
         )
         logger.info("Help message sent via callback edit.")
     else:
-        await update.message.reply_text(help_text, parse_mode='MarkdownV2')
+        await update.message.reply_text(help_text, parse_mode='MarkdownV2') # Use manually escaped text
         logger.info("Help message sent via direct command.")
 
 async def back_to_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -317,7 +349,7 @@ async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     # Set current_mode to 'single_file_pending' to allow file handling only after /link
     context.user_data['current_mode'] = 'single_file_pending'
-    await update.message.reply_text("कृपया मुझे वह फ़ाइल (डॉक्यूमेंट या वीडियो) भेजें जिसकी आप लिंक जनरेट करना चाहते हैं।")
+    await update.message.reply_text("कृपया मुझे वह फ़ाइल (डॉक्यूमेंट या वीडियो) भेजें जिसकी आप लिंक जनरेट करना चाहते हैं।") # Simple text, no special chars that need escaping
 
 async def batch_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> ConversationHandler.END:
     user = update.effective_user
@@ -338,11 +370,13 @@ async def batch_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Con
     keyboard.append([InlineKeyboardButton("रद्द करें", callback_data="cancel_batch_generation")])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
+    # Manual escaping for MarkdownV2 specific characters in the static text
     await update.message.reply_text(
-        "ठीक है, मुझे एक-एक करके फ़ाइलें (डॉक्यूमेंट या वीडियो) भेजें। "
-        "प्रत्येक फ़ाइल भेजने के बाद मैं आपको सूचित करूँगा।\n\n"
-        "जब आप सभी फ़ाइलें भेज दें, तो 'लिंक जनरेट करें' बटन पर क्लिक करें। यदि आप रद्द करना चाहते हैं तो 'रद्द करें' दबाएं।",
-        reply_markup=reply_markup
+        "ठीक है, मुझे एक\-एक करके फ़ाइलें \\(डॉक्यूमेंट या वीडियो\\) भेजें\\. "
+        "प्रत्येक फ़ाइल भेजने के बाद मैं आपको सूचित करूँगा\\.\n\n"
+        "जब आप सभी फ़ाइलें भेज दें, तो 'लिंक जनरेट करें' बटन पर क्लिक करें\\. यदि आप रद्द करना चाहते हैं तो 'रद्द करें' दबाएं\\.",
+        reply_markup=reply_markup,
+        parse_mode='MarkdownV2'
     )
     return SENDING_BATCH_FILES
 
@@ -354,7 +388,7 @@ async def handle_batch_file_received(update: Update, context: ContextTypes.DEFAU
     # Only process if in batch mode
     if context.user_data.get('current_mode') != 'batch_file_pending':
         logger.warning(f"File received from {user.id} not in batch mode. Ignoring for batch.")
-        await update.message.reply_text("आपने `/batch` कमांड का उपयोग नहीं किया है। कृपया लिंक जनरेट करने के लिए `/link` या `/batch` कमांड का उपयोग करें।")
+        await update.message.reply_text("आपने `/batch` कमांड का उपयोग नहीं किया है। कृपया लिंक जनरेट करने के लिए `/link` या `/batch` कमांड का उपयोग करें।", parse_mode='MarkdownV2')
         context.user_data.pop('current_mode', None) # Reset mode if not in pending state
         return ConversationHandler.END # End the conversation if not in correct state
 
@@ -399,7 +433,7 @@ async def handle_batch_file_received(update: Update, context: ContextTypes.DEFAU
 
     except Exception as e:
         logger.error(f"Error forwarding file {original_filename} to storage channel: {e}")
-        await update.message.reply_text(f"स्टोरेज चैनल पर फ़ाइल फ़ॉरवर्ड करने में त्रुटि: `{escape_markdown_v2(str(e))}`")
+        await update.message.reply_text(f"स्टोरेज चैनल पर फ़ाइल फ़ॉरवर्ड करने में त्रुटि: `{escape_markdown_v2(str(e))}`", parse_mode='MarkdownV2')
         return SENDING_BATCH_FILES
 
     # स्थायी टोकन जनरेट करें और MongoDB में सहेजें
@@ -417,7 +451,7 @@ async def handle_batch_file_received(update: Update, context: ContextTypes.DEFAU
     files_collection.insert_one(file_info)
     logger.info(f"File {original_filename} (permanent token: {permanent_token}) saved to MongoDB.")
 
-    # उपयोगकर्ता की जनरेट की गई लिंक्स की संख्या बढ़ाएँ
+    # उपयोगकर्ता की जनरेट की गई लिंक्स की संख्या बढ़ाएँ (यहां increment होता है)
     user_links_collection.update_one(
         {"_id": user_id},
         {"$inc": {"link_count": 1}},
@@ -430,8 +464,9 @@ async def handle_batch_file_received(update: Update, context: ContextTypes.DEFAU
     keyboard.append([InlineKeyboardButton("रद्द करें", callback_data="cancel_batch_generation")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "फ़ाइल प्राप्त हुई! अधिक फ़ाइलें भेजें या समाप्त करने के लिए 'लिंक जनरेट करें' पर क्लिक करें।",
-        reply_markup=reply_markup
+        "फ़ाइल प्राप्त हुई\! अधिक फ़ाइलें भेजें या समाप्त करने के लिए 'लिंक जनरेट करें' पर क्लिक करें\\.",
+        reply_markup=reply_markup,
+        parse_mode='MarkdownV2'
     )
     return SENDING_BATCH_FILES
 
@@ -439,7 +474,8 @@ async def generate_batch_links(update: Update, context: ContextTypes.DEFAULT_TYP
     user = update.effective_user
     await update_user_info(user.id, user.username, user.first_name)
     logger.info(f"Generate batch links button pressed by {user.id}")
-    await update.callback_query.answer("लिंक जनरेट कर रहा हूँ...")
+    await update.callback_query.answer("लिंक जनरेट कर रहा हूँ\\.\\.") # Escaped .
+
     user_id = user.id
 
     if user_id not in batch_files_in_progress or not batch_files_in_progress[user_id]:
@@ -471,8 +507,9 @@ async def generate_batch_links(update: Update, context: ContextTypes.DEFAULT_TYP
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.callback_query.message.reply_text(
-        "आपकी बैच फ़ाइलें सहेजी गई हैं! यह लिंक स्थायी है। आगे बढ़ने और एक छोटा सा कार्य पूरा करने के लिए 'बैच फ़ाइलें डाउनलोड करें' पर क्लिक करें:",
-        reply_markup=reply_markup
+        "आपकी बैच फ़ाइलें सहेजी गई हैं\! यह लिंक स्थायी है\\. आगे बढ़ने और एक छोटा सा कार्य पूरा करने के लिए 'बैच फ़ाइलें डाउनलोड करें' पर क्लिक करें:",
+        reply_markup=reply_markup,
+        parse_mode='MarkdownV2'
     )
 
     del batch_files_in_progress[user_id]
@@ -511,7 +548,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return await handle_batch_file_received(update, context)
     elif context.user_data.get('current_mode') != 'single_file_pending':
         logger.info(f"File received from {user.id} but not in /link or /batch mode. Ignoring.")
-        await update.message.reply_text("लिंक जनरेट करने के लिए कृपया `/link` या `/batch` कमांड का उपयोग करें।")
+        await update.message.reply_text("फ़ाइल लिंक जनरेट करने के लिए, कृपया `/link` या `/batch` कमांड का उपयोग करें।", parse_mode='MarkdownV2')
         context.user_data.pop('current_mode', None) # Reset mode
         return
 
@@ -545,7 +582,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             sent_message = await context.bot.send_photo(
                 chat_id=PUBLIC_CHANNEL_ID,
                 photo=file.file_id,
-                caption=f"फोटो ({user_chat_id})" # Add some identifier
+                caption=f"फोटो \\({user_chat_id}\\)" # Add some identifier, escaped ( )
             )
             permanent_telegram_file_id = sent_message.photo[-1].file_id # Get the file_id of the largest photo
         else: # For document, video, apk
@@ -568,7 +605,8 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     except Exception as e:
         logger.error(f"Error forwarding single file {original_filename} to storage channel: {e}")
-        await update.message.reply_text(f"स्टोरेज चैनल पर फ़ाइल फ़ॉरवर्ड करने में त्रुटि: `{escape_markdown_v2(str(e))}`")
+        # Escape the error message itself
+        await update.message.reply_text(f"स्टोरेज चैनल पर फ़ाइल फ़ॉरवर्ड करने में त्रुटि: `{escape_markdown_v2(str(e))}`", parse_mode='MarkdownV2')
         context.user_data.pop('current_mode', None) # Reset mode
         return
 
@@ -587,7 +625,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     files_collection.insert_one(file_info)
     logger.info(f"Single file {original_filename} (permanent token: {permanent_token}) saved to MongoDB.")
 
-    # उपयोगकर्ता की जनरेट की गई लिंक्स की संख्या बढ़ाएँ
+    # उपयोगकर्ता की जनरेट की गई लिंक्स की संख्या बढ़ाएँ (यहां increment होता है)
     user_links_collection.update_one(
         {"_id": user.id},
         {"$inc": {"link_count": 1}},
@@ -605,28 +643,37 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        "आपकी फ़ाइल सहेजी गई है! यह लिंक स्थायी है। आगे बढ़ने और एक छोटा सा कार्य पूरा करने के लिए 'फ़ाइल डाउनलोड करें' पर क्लिक करें:",
-        reply_markup=reply_markup
+        "आपकी फ़ाइल सहेजी गई है\! यह लिंक स्थायी है\\. आगे बढ़ने और एक छोटा सा कार्य पूरा करने के लिए 'फ़ाइल डाउनलोड करें' पर क्लिक करें:",
+        reply_markup=reply_markup,
+        parse_mode='MarkdownV2'
     )
     context.user_data.pop('current_mode', None)
 
 # --- New Callback Handler for Copy Link ---
 async def copy_link_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer("लिंक कॉपी करने के लिए तैयार...")
+    await query.answer("लिंक कॉपी करने के लिए तैयार\\.\\.") # Escaped .
 
     data = query.data
     apps_script_url = ""
     if data.startswith("copy_batch_link_"):
         batch_id = data[len("copy_batch_link_"):]
         apps_script_url = f"{GOOGLE_APPS_SCRIPT_API_URL}?batch_token={batch_id}"
-        message_text = f"यह आपकी बैच फ़ाइलों के लिए स्थायी लिंक है:\n\n`{escape_markdown_v2(apps_script_url)}`\n\nइसे कॉपी करने के लिए टैप करके रखें।"
+        message_text = (
+            f"यह आपकी बैच फ़ाइलों के लिए स्थायी लिंक है:\n\n"
+            f"`{escape_markdown_v2(apps_script_url)}`\n\n"
+            f"इसे कॉपी करने के लिए टैप करके रखें\\." # Escaped .
+        )
     elif data.startswith("copy_link_"):
         permanent_token = data[len("copy_link_"):]
         apps_script_url = f"{GOOGLE_APPS_SCRIPT_API_URL}?token={permanent_token}"
-        message_text = f"यह आपकी फ़ाइल के लिए स्थायी लिंक है:\n\n`{escape_markdown_v2(apps_script_url)}`\n\nइसे कॉपी करने के लिए टैप करके रखें।"
+        message_text = (
+            f"यह आपकी फ़ाइल के लिए स्थायी लिंक है:\n\n"
+            f"`{escape_markdown_v2(apps_script_url)}`\n\n"
+            f"इसे कॉपी करने के लिए टैप करके रखें\\." # Escaped .
+        )
     else:
-        message_text = "कॉपी करने के लिए अमान्य लिंक प्रकार।"
+        message_text = "कॉपी करने के लिए अमान्य लिंक प्रकार।" # Simple text, no special chars that need escaping
 
     await query.message.reply_text(message_text, parse_mode='MarkdownV2')
 
@@ -642,12 +689,17 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     total_batches = batches_collection.count_documents({})
 
     stats_text = (
-        f"📊 **बॉट आंकड़े**\n"
+        f"📊 \\*\\*बॉट आंकड़े\\*\\*\n"
         f"कुल फ़ाइलें संग्रहीत: `{total_files}`\n"
         f"कुल बैच: `{total_batches}`\n"
         f"कुल उपयोगकर्ता: `{total_users}`"
     )
+    # Using escape_markdown_v2 on the whole string is generally safer if it contains varying user-generated content or complex formatting.
+    # For mostly static text with specific formatting, manual escaping of known special characters is sometimes clearer.
+    # Let's keep it simple and manually escape specific characters if they cause issues.
+    # For now, this string looks fine for MarkdownV2 with backslashes for asterisks.
     await update.message.reply_text(stats_text, parse_mode='MarkdownV2')
+
 
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
@@ -655,31 +707,33 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     logger.info(f"/broadcast command received from {user.id}")
 
     if user.id != ADMIN_USER_ID:
-        await update.message.reply_text("आपको यह कमांड उपयोग करने की अनुमति नहीं है।")
+        await update.message.reply_text("आपको यह कमांड उपयोग करने की अनुमति नहीं है।") # Simple text
         logger.warning(f"Unauthorized broadcast attempt by user {user.id}")
         return
 
     if not context.args:
-        await update.message.reply_text("कृपया प्रसारण के लिए एक संदेश प्रदान करें।\nउदाहरण: `/broadcast नमस्ते सभी को!`")
+        await update.message.reply_text("कृपया प्रसारण के लिए एक संदेश प्रदान करें।\nउदाहरण: `/broadcast नमस्ते सभी को!`", parse_mode='MarkdownV2') # Example contains special chars
         return
 
     message_to_send = " ".join(context.args)
+    escaped_message_to_send = escape_markdown_v2(message_to_send) # Escape broadcast message, as it's user input
 
     users = users_collection.find({})
     sent_count = 0
     failed_count = 0
 
-    await update.message.reply_text("प्रसारण संदेश भेज रहा हूँ...")
+    await update.message.reply_text("प्रसारण संदेश भेज रहा हूँ...") # Simple text
 
     for target_user in users:
         try:
-            await context.bot.send_message(chat_id=target_user["_id"], text=message_to_send)
+            # Send with MarkdownV2 and escaped message
+            await context.bot.send_message(chat_id=target_user["_id"], text=escaped_message_to_send, parse_mode='MarkdownV2')
             sent_count += 1
         except Exception as e:
             logger.error(f"Failed to send broadcast to user {target_user['_id']}: {e}")
             failed_count += 1
 
-    await update.message.reply_text(f"प्रसारण समाप्त।\nभेजा गया: {sent_count}\nविफल: {failed_count}")
+    await update.message.reply_text(f"प्रसारण समाप्त।\nभेजा गया: {sent_count}\nविफल: {failed_count}") # Simple text
     logger.info(f"Broadcast completed. Sent: {sent_count}, Failed: {failed_count}")
 
 async def dellink_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -688,12 +742,12 @@ async def dellink_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     logger.info(f"/dellink command received from {user.id}")
 
     if user.id != ADMIN_USER_ID:
-        await update.message.reply_text("आपको यह कमांड उपयोग करने की अनुमति नहीं है।")
+        await update.message.reply_text("आपको यह कमांड उपयोग करने की अनुमति नहीं है।") # Simple text
         logger.warning(f"Unauthorized dellink attempt by user {user.id}")
         return
 
     if not context.args:
-        await update.message.reply_text("कृपया हटाने के लिए स्थायी टोकन प्रदान करें।\nउदाहरण: `/dellink 1234abcd-5678-ijkl-90mn-opqrstuvwxyz`")
+        await update.message.reply_text("कृपया हटाने के लिए स्थायी टोकन प्रदान करें।\nउदाहरण: `/dellink 1234abcd-5678-ijkl-90mn-opqrstuvwxyz`", parse_mode='MarkdownV2') # Example contains special chars
         return
 
     token_to_delete = context.args[0]
@@ -718,10 +772,12 @@ async def dellink_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 {"_id": file_info["generated_by"]},
                 {"$inc": {"link_count": -1}}
             )
-        await update.message.reply_text(f"टोकन `{token_to_delete}` और संबंधित फ़ाइल जानकारी सफलतापूर्वक हटा दी गई।")
+        # Escape the token as it's within a code block
+        await update.message.reply_text(f"टोकन `{escape_markdown_v2(token_to_delete)}` और संबंधित फ़ाइल जानकारी सफलतापूर्वक हटा दी गई।", parse_mode='MarkdownV2')
         logger.info(f"Token {token_to_delete} deleted by admin {user.id}.")
     else:
-        await update.message.reply_text(f"टोकन `{token_to_delete}` नहीं मिला।")
+        # Escape the token as it's within a code block
+        await update.message.reply_text(f"टोकन `{escape_markdown_v2(token_to_delete)}` नहीं मिला।", parse_mode='MarkdownV2')
         logger.warning(f"Dellink command: Token {token_to_delete} not found for deletion by admin {user.id}.")
 
 async def my_link_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -732,7 +788,9 @@ async def my_link_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user_link_data = user_links_collection.find_one({"_id": user.id})
     link_count = user_link_data["link_count"] if user_link_data and "link_count" in user_link_data else 0
 
-    await update.message.reply_text(f"आपने अब तक `{link_count}` लिंक्स जनरेट की हैं।")
+    # Ensure link_count is correctly fetched and displayed.
+    # The increment logic for 'link_count' is in handle_file and handle_batch_file_received.
+    await update.message.reply_text(f"आपने अब तक `{link_count}` लिंक्स जनरेट की हैं।", parse_mode='MarkdownV2')
 
 
 def main() -> None:
@@ -777,7 +835,7 @@ def main() -> None:
     # Any other attachment or text message will be handled by the next MessageHandler
     application.add_handler(MessageHandler(filters.ATTACHMENT, handle_file))
     # Add a handler for any text messages that are not commands
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text("फ़ाइल लिंक जनरेट करने के लिए, कृपया `/link` या `/batch` कमांड का उपयोग करें।"), None))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text("फ़ाइल लिंक जनरेट करने के लिए, कृपया `/link` या `/batch` कमांड का उपयोग करें।", parse_mode='MarkdownV2'), None))
 
 
     # New command handlers
