@@ -34,7 +34,7 @@ UPDATES_CHANNEL_LINK = "https://t.me/asbhai_bsr" # आपका अपडेट 
 GOOGLE_APPS_SCRIPT_API_URL = os.getenv("GOOGLE_APPS_SCRIPT_API_URL", "https://script.google.com/macros/s/AKfycbwDqKLE1bZjwBcNT8wDA2SlKs821Gq7bhea8JOzgiFPyGuATAKXWY_LtvOwlFwL9n6w/exec") # Example URL, replace with your actual URL
 
 # Start Photo URL for the bot (leave empty if not needed, or add your photo URL)
-START_PHOTO_URL = os.getenv("START_PHOTO_URL", "https://envs.sh/qDO.jpg") # <-- यहां अपनी बॉट फोटो का URL डालें
+START_PHOTO_URL = os.getenv("START_PHOTO_URL", "https://envs.sh/0Eh.jpg") # <-- यहां अपनी बॉट फोटो का URL डालें
 
 # MongoDB Configuration
 MONGO_URI = os.getenv("MONGO_URI")
