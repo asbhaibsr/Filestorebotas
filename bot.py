@@ -6,11 +6,11 @@ import requests
 import json
 import asyncio # For async operations like sleep
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineQueryResultCachedDocument, InlineQueryResultCachedVideo, InlineQueryResultCachedPhoto
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters, ContextTypes,
     ConversationHandler,
-    CallbackQueryHandler
+    CallbackQueryHandler, InlineQueryHandler
 )
 from pymongo import MongoClient
 from flask import Flask
@@ -28,10 +28,10 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 PUBLIC_CHANNEL_USERNAME = os.getenv("PUBLIC_CHANNEL_USERNAME")
 PUBLIC_CHANNEL_ID = int(os.getenv("PUBLIC_CHANNEL_ID"))
 
-UPDATES_CHANNEL_LINK = "https://t.me/asbhai_bsr"
+UPDATES_CHANNEL_LINK = "https://t.me/asbhai_bsr" # आपका अपडेट चैनल लिंक
 
 # **महत्वपूर्ण:** अपनी Google Apps Script वेब ऐप का URL यहां डालें
-GOOGLE_APPS_SCRIPT_API_URL = os.getenv("GOOGLE_APPS_SCRIPT_API_URL", "https://script.google.com/macros/s/AKfycbwDqKLE1bZjwBcNT8wDA2SlKs821Gq7bhea8JOzgiHfyPyGuATAKXWY_LtvOwlFwL9n6w/exec")
+GOOGLE_APPS_SCRIPT_API_URL = os.getenv("GOOGLE_APPS_SCRIPT_API_URL", "https://script.google.com/macros/s/AKfycbwDqKLE1bZjwBcNT8wDA2SlKs821Gq7bhea8JOzgiFPyGuATAKXWY_LtvOwlFwL9n6w/exec") # Example URL, replace with your actual URL
 
 # Start Photo URL for the bot (leave empty if not needed, or add your photo URL)
 START_PHOTO_URL = os.getenv("START_PHOTO_URL", "https://envs.sh/qDO.jpg") # <-- यहां अपनी बॉट फोटो का URL डालें
@@ -76,8 +76,6 @@ async def update_user_info(user_id: int, username: str, first_name: str):
 # --- MarkdownV2 escaping helper ---
 def escape_markdown_v2(text: str) -> str:
     # Telegram MarkdownV2 special characters that need to be escaped
-    # Added backslash escape for '!' and '-' which caused recent errors.
-    # Added '\' for general safety within code blocks.
     escape_chars = r'_*[]()~`>#+-=|{}.!\ ' # Space also needs to be escaped for pre/code blocks
     # Escape each special character with a backslash
     return ''.join(['\\' + char if char in escape_chars else char for char in text])
@@ -113,8 +111,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                         telegram_file_id = file_data["telegram_file_id"]
                         original_filename = file_data["original_filename"]
                         try:
-                            # फ़ॉरवर्ड बटन जोड़ें
-                            forward_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("इस फ़ाइल को कहीं और फॉरवर्ड करें", switch_inline_query_current_chat=telegram_file_id)]])
+                            # Inline कीबोर्ड में दो बटन
+                            keyboard = [
+                                [InlineKeyboardButton("इस फ़ाइल को कहीं और फॉरवर्ड करें", switch_inline_query_current_chat=telegram_file_id)],
+                                [InlineKeyboardButton("Join Updates Channel", url=UPDATES_CHANNEL_LINK)] # नया बटन
+                            ]
+                            reply_markup = InlineKeyboardMarkup(keyboard)
 
                             # Escape original_filename for MarkdownV2 in caption
                             escaped_filename = escape_markdown_v2(original_filename)
@@ -122,7 +124,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                             caption_text_template = (
                                 f"यहाँ आपकी फ़ाइल है: `{escaped_filename}`\n\n"
                                 f"कॉपीराइट मुद्दों से बचने के लिए, कृपया इस फ़ाइल को कहीं और फॉरवर्ड करें या डाउनलोड करें। "
-                                f"यह फ़ाइल 2 मिनट में ऑटो\-डिलीट हो जाएगी।" # '\-' for hyphen
+                                f"यह फ़ाइल 2 मिनट में ऑटो\-डिलीट हो जाएगी।\n\n"
+                                f"⚠️ \\*\\*चेतावनी: इस फ़ाइल को कहीं और फ़ॉरवर्ड कर दें\\*\\* ⚠️" # नया वॉर्निंग टेक्स्ट
                             )
 
                             if file_data.get("file_type") == "video":
@@ -132,24 +135,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                                     caption=caption_text,
                                     filename=original_filename,
                                     parse_mode='MarkdownV2',
-                                    reply_markup=forward_keyboard
+                                    reply_markup=reply_markup
                                 )
-                            else: # assume it's a document/photo/apk
+                            elif file_data.get("file_type") == "photo":
+                                sent_msg = await update.message.reply_photo(
+                                    photo=telegram_file_id,
+                                    caption=caption_text_template,
+                                    filename=original_filename,
+                                    parse_mode='MarkdownV2',
+                                    reply_markup=reply_markup
+                                )
+                            else: # assume it's a document/apk
                                 sent_msg = await update.message.reply_document(
                                     document=telegram_file_id,
                                     caption=caption_text_template,
                                     filename=original_filename,
                                     parse_mode='MarkdownV2',
-                                    reply_markup=forward_keyboard
+                                    reply_markup=reply_markup
                                 )
                             sent_message_ids.append(sent_msg.message_id)
                             logger.info(f"Batch file {original_filename} sent to user {user.id}")
                         except Exception as e:
                             logger.error(f"Error sending batch file {original_filename} to user {user.id}: {e}")
                             # Escape the error message itself
-                            await update.message.reply_text(f"क्षमा करें, बैच फ़ाइल `{escaped_filename}` नहीं भेजी जा सकी। एक त्रुटि हुई: `{escape_markdown_v2(str(e))}`")
+                            await update.message.reply_text(f"क्षमा करें, बैच फ़ाइल `{escaped_filename}` नहीं भेजी जा सकी। एक त्रुटि हुई: `{escape_markdown_v2(str(e))}`", parse_mode='MarkdownV2')
                     else:
-                        await update.message.reply_text(f"क्षमा करें, बैच में एक फ़ाइल के लिए डेटा नहीं मिला: `{escape_markdown_v2(token)}`")
+                        await update.message.reply_text(f"क्षमा करें, बैच में एक फ़ाइल के लिए डेटा नहीं मिला: `{escape_markdown_v2(token)}`", parse_mode='MarkdownV2')
 
                 await update.message.reply_text("सभी बैच फ़ाइलें भेजी गईं!")
 
@@ -183,8 +194,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 telegram_file_id = file_data["telegram_file_id"]
                 original_filename = file_data["original_filename"]
                 try:
-                    # फ़ॉरवर्ड बटन जोड़ें
-                    forward_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("इस फ़ाइल को कहीं और फॉरवर्ड करें", switch_inline_query_current_chat=telegram_file_id)]])
+                    # Inline कीबोर्ड में दो बटन
+                    keyboard = [
+                        [InlineKeyboardButton("इस फ़ाइल को कहीं और फॉरवर्ड करें", switch_inline_query_current_chat=telegram_file_id)],
+                        [InlineKeyboardButton("Join Updates Channel", url=UPDATES_CHANNEL_LINK)] # नया बटन
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
 
                     # Escape original_filename for MarkdownV2 in caption
                     escaped_filename = escape_markdown_v2(original_filename)
@@ -192,7 +207,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     caption_text_template = (
                         f"यहाँ आपकी फ़ाइल है: `{escaped_filename}`\n\n"
                         f"कॉपीराइट मुद्दों से बचने के लिए, कृपया इस फ़ाइल को कहीं और फॉरवर्ड करें या डाउनलोड करें। "
-                        f"यह फ़ाइल 2 मिनट में ऑटो\-डिलीट हो जाएगी।" # '\-' for hyphen
+                        f"यह फ़ाइल 2 मिनट में ऑटो\-डिलीट हो जाएगी।\n\n"
+                        f"⚠️ \\*\\*चेतावनी: इस फ़ाइल को कहीं और फ़ॉरवर्ड कर दें\\*\\* ⚠️" # नया वॉर्निंग टेक्स्ट
                     )
 
                     if file_data.get("file_type") == "video":
@@ -202,16 +218,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                             caption=caption_text,
                             filename=original_filename,
                             parse_mode='MarkdownV2',
-                            reply_markup=forward_keyboard
+                            reply_markup=reply_markup
                         )
                         logger.info(f"Video {original_filename} sent to user {user.id}")
-                    else: # assume it's a document/photo/apk/photo
+                    elif file_data.get("file_type") == "photo":
+                        sent_msg = await update.message.reply_photo(
+                            photo=telegram_file_id,
+                            caption=caption_text_template,
+                            filename=original_filename,
+                            parse_mode='MarkdownV2',
+                            reply_markup=reply_markup
+                        )
+                        logger.info(f"Photo {original_filename} sent to user {user.id}")
+                    else: # assume it's a document/apk
                         sent_msg = await update.message.reply_document(
                             document=telegram_file_id,
                             caption=caption_text_template,
                             filename=original_filename,
                             parse_mode='MarkdownV2',
-                            reply_markup=forward_keyboard
+                            reply_markup=reply_markup
                         )
                         logger.info(f"Document {original_filename} sent to user {user.id}")
 
@@ -226,7 +251,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 except Exception as e:
                     logger.error(f"Error sending file {original_filename} to user {user.id}: {e}")
                     # Escape the error message itself
-                    await update.message.reply_text(f"क्षमा करें, फ़ाइल नहीं भेजी जा सकी। एक त्रुटि हुई: `{escape_markdown_v2(str(e))}`")
+                    await update.message.reply_text(f"क्षमा करें, फ़ाइल नहीं भेजी जा सकी। एक त्रुटि हुई: `{escape_markdown_v2(str(e))}`", parse_mode='MarkdownV2')
                 return
             else:
                 logger.warning(f"Invalid permanent token {original_permanent_token} requested by user {user.id} after verification.")
@@ -406,25 +431,37 @@ async def handle_batch_file_received(update: Update, context: ContextTypes.DEFAU
     elif update.message.video:
         file = update.message.video
         file_type = "video"
+    elif update.message.photo: # Handle photos in batch too
+        file = update.message.photo[-1]
+        file_type = "photo"
     else:
         logger.info(f"Unsupported file type received from {user.id} during batch.")
-        await update.message.reply_text("कृपया एक डॉक्यूमेंट या एक वीडियो भेजें। अन्य फ़ाइल प्रकार बैच के लिए समर्थित नहीं हैं।")
+        await update.message.reply_text("कृपया एक डॉक्यूमेंट, वीडियो या फोटो भेजें। अन्य फ़ाइल प्रकार बैच के लिए समर्थित नहीं हैं।")
         return SENDING_BATCH_FILES # Stay in the batch state
 
     original_filename = file.file_name if file.file_name else f"unnamed_{file_type}"
     user_chat_id = update.message.chat_id
 
     try:
-        sent_message = await context.bot.forward_message(
-            chat_id=PUBLIC_CHANNEL_ID,
-            from_chat_id=user_chat_id,
-            message_id=update.message.message_id
-        )
-        permanent_telegram_file_id = None
-        if sent_message.document:
-            permanent_telegram_file_id = sent_message.document.file_id
-        elif sent_message.video:
-            permanent_telegram_file_id = sent_message.video.file_id
+        # For photos, you generally send_photo directly, not forward
+        if file_type == "photo":
+            sent_message = await context.bot.send_photo(
+                chat_id=PUBLIC_CHANNEL_ID,
+                photo=file.file_id,
+                caption=f"फोटो \\({user_chat_id}\\)" # Add some identifier, escaped ( )
+            )
+            permanent_telegram_file_id = sent_message.photo[-1].file_id # Get the file_id of the largest photo
+        else: # For document, video, apk
+            sent_message = await context.bot.forward_message(
+                chat_id=PUBLIC_CHANNEL_ID,
+                from_chat_id=user_chat_id,
+                message_id=update.message.message_id
+            )
+            permanent_telegram_file_id = None
+            if sent_message.document:
+                permanent_telegram_file_id = sent_message.document.file_id
+            elif sent_message.video:
+                permanent_telegram_file_id = sent_message.video.file_id
 
         if not permanent_telegram_file_id:
             logger.error(f"Failed to get file ID from forwarded message for file {original_filename}")
@@ -696,7 +733,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
     # Using escape_markdown_v2 on the whole string is generally safer if it contains varying user-generated content or complex formatting.
     # For mostly static text with specific formatting, manual escaping of known special characters is sometimes clearer.
-    # Let's keep it simple and manually escape specific characters if they cause issues.
     # For now, this string looks fine for MarkdownV2 with backslashes for asterisks.
     await update.message.reply_text(stats_text, parse_mode='MarkdownV2')
 
@@ -792,6 +828,58 @@ async def my_link_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # The increment logic for 'link_count' is in handle_file and handle_batch_file_received.
     await update.message.reply_text(f"आपने अब तक `{link_count}` लिंक्स जनरेट की हैं।", parse_mode='MarkdownV2')
 
+async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.inline_query.query
+    logger.info(f"Inline query received: {query}")
+    results = []
+
+    if query:
+        # Try to find the file by its Telegram file_id (which is the query)
+        file_data = files_collection.find_one({"telegram_file_id": query})
+
+        if file_data:
+            original_filename = file_data["original_filename"]
+            telegram_file_id = file_data["telegram_file_id"]
+            file_type = file_data["file_type"]
+
+            if file_type == "video":
+                results.append(
+                    InlineQueryResultCachedVideo(
+                        id=str(uuid.uuid4()),
+                        video_file_id=telegram_file_id,
+                        title=f"वीडियो: {original_filename}",
+                        caption=f"यहाँ आपकी वीडियो है: `{escape_markdown_v2(original_filename)}`",
+                        parse_mode='MarkdownV2'
+                    )
+                )
+            elif file_type == "photo":
+                results.append(
+                    InlineQueryResultCachedPhoto(
+                        id=str(uuid.uuid4()),
+                        photo_file_id=telegram_file_id,
+                        title=f"फोटो: {original_filename}",
+                        caption=f"यहाँ आपकी फोटो है: `{escape_markdown_v2(original_filename)}`",
+                        parse_mode='MarkdownV2'
+                    )
+                )
+            else: # document or apk
+                results.append(
+                    InlineQueryResultCachedDocument(
+                        id=str(uuid.uuid4()),
+                        document_file_id=telegram_file_id,
+                        title=f"फ़ाइल: {original_filename}",
+                        caption=f"यहाँ आपकी फ़ाइल है: `{escape_markdown_v2(original_filename)}`",
+                        parse_mode='MarkdownV2'
+                    )
+                )
+        else:
+            logger.info(f"No file found for inline query: {query}")
+    else:
+        # If query is empty, maybe show some recent files or a help message
+        # For now, let's keep it simple and only respond to specific file_ids.
+        pass # No results for empty query
+
+    await update.inline_query.answer(results, cache_time=10) # Cache for 10 seconds
 
 def main() -> None:
     required_env_vars = ["TELEGRAM_BOT_TOKEN", "MONGO_URI", "PUBLIC_CHANNEL_USERNAME", "PUBLIC_CHANNEL_ID", "GOOGLE_APPS_SCRIPT_API_URL", "ADMIN_USER_ID"]
@@ -847,6 +935,9 @@ def main() -> None:
     # New CallbackQueryHandler for copy link buttons
     application.add_handler(CallbackQueryHandler(copy_link_callback, pattern="^copy_link_.*"))
     application.add_handler(CallbackQueryHandler(copy_link_callback, pattern="^copy_batch_link_.*"))
+
+    # Add InlineQueryHandler
+    application.add_handler(InlineQueryHandler(inline_query_handler))
 
 
     logger.info("बॉट चल रहा है...")
