@@ -4,6 +4,7 @@ import datetime
 import logging 
 import requests 
 import json     
+import asyncio # For async operations like sleep
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
@@ -31,8 +32,11 @@ UPDATES_CHANNEL_LINK = "https://t.me/asbhai_bsr"
 
 # **महत्वपूर्ण:** अपनी Google Apps Script वेब ऐप का URL यहां डालें
 # यह वही URL है जो आपको Google Apps Script को डिप्लॉय करने के बाद मिला था (Apps Script का doGet endpoint)
-GOOGLE_APPS_SCRIPT_API_URL = os.getenv("GOOGLE_APPS_SCRIPT_API_URL", "https://script.google.com/macros/s/AKfycbwDqKLE1bZjwBcNT8wDA2SlKs821Gq7bhea8JOygiHfyPyGuATAKXWY_LtvOwlFwL9n6w/exec") 
+GOOGLE_APPS_SCRIPT_API_URL = os.getenv("GOOGLE_APPS_SCRIPT_API_URL", "https://script.google.com/macros/s/AKfycbwDqKLE1bZjwBcNT8wDA2SlKs821Gq7bhea8JOzgiHfyPyGuATAKXWY_LtvOwlFwL9n6w/exec") 
 # सुनिश्चित करें कि यह Apps Script का नया डिप्लॉयमेंट URL है!
+
+# Start Photo URL for the bot (leave empty if not needed, or add your photo URL)
+START_PHOTO_URL = os.getenv("START_PHOTO_URL", "https://envs.sh/qDO.jpg") # <-- यहां अपनी बॉट फोटो का URL डालें
 
 # MongoDB Configuration
 MONGO_URI = os.getenv("MONGO_URI")
@@ -41,6 +45,7 @@ db = client.file_bot
 files_collection = db.files # फ़ाइल मेटाडेटा के लिए
 batches_collection = db.batches # बैच जानकारी के लिए
 users_collection = db.users # यूजर जानकारी के लिए (stats और broadcast के लिए)
+user_links_collection = db.user_links # उपयोगकर्ता द्वारा जनरेट की गई लिंक्स का ट्रैक रखने के लिए
 
 batch_files_in_progress = {} 
 
@@ -90,31 +95,54 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             if batch_data and batch_data.get("permanent_tokens"):
                 permanent_tokens = batch_data["permanent_tokens"]
                 await update.message.reply_text("आपकी बैच फ़ाइलें भेजी जा रही हैं...")
+                
+                # मैसेज आईडी को ट्रैक करें ताकि उन्हें बाद में हटाया जा सके
+                sent_message_ids = []
+
                 for token in permanent_tokens:
                     file_data = files_collection.find_one({"token": token})
                     if file_data:
                         telegram_file_id = file_data["telegram_file_id"]
                         original_filename = file_data["original_filename"]
                         try:
+                            # फ़ॉरवर्ड बटन जोड़ें
+                            forward_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("इस फ़ाइल को कहीं और फॉरवर्ड करें", switch_inline_query_current_chat=telegram_file_id)]])
+
                             if file_data.get("file_type") == "video": 
-                                await update.message.reply_video(
+                                sent_msg = await update.message.reply_video(
                                     video=telegram_file_id,
-                                    caption=f"यहाँ आपकी वीडियो है: {original_filename}",
-                                    filename=original_filename 
+                                    caption=f"यहाँ आपकी वीडियो है: `{original_filename}`\n\nकॉपीराइट मुद्दों से बचने के लिए, कृपया इस फ़ाइल को कहीं और फॉरवर्ड करें या डाउनलोड करें। यह फ़ाइल 2 मिनट में ऑटो-डिलीट हो जाएगी।",
+                                    filename=original_filename,
+                                    parse_mode='MarkdownV2',
+                                    reply_markup=forward_keyboard
                                 )
                             else: # assume it's a document
-                                await update.message.reply_document(
+                                sent_msg = await update.message.reply_document(
                                     document=telegram_file_id,
-                                    caption=f"यहाँ आपकी फ़ाइल है: {original_filename}",
-                                    filename=original_filename 
+                                    caption=f"यहाँ आपकी फ़ाइल है: `{original_filename}`\n\nकॉपीराइट मुद्दों से बचने के लिए, कृपया इस फ़ाइल को कहीं और फॉरवर्ड करें या डाउनलोड करें। यह फ़ाइल 2 मिनट में ऑटो-डिलीट हो जाएगी।",
+                                    filename=original_filename,
+                                    parse_mode='MarkdownV2',
+                                    reply_markup=forward_keyboard
                                 )
+                            sent_message_ids.append(sent_msg.message_id)
                             logger.info(f"Batch file {original_filename} sent to user {user.id}")
                         except Exception as e:
                             logger.error(f"Error sending batch file {original_filename} to user {user.id}: {e}")
-                            await update.message.reply_text(f"क्षमा करें, बैच फ़ाइल '{original_filename}' नहीं भेजी जा सकी। एक त्रुटि हुई: {e}")
+                            await update.message.reply_text(f"क्षमा करें, बैच फ़ाइल `{original_filename}` नहीं भेजी जा सकी। एक त्रुटि हुई: `{e}`")
                     else:
-                        await update.message.reply_text(f"क्षमा करें, बैच में एक फ़ाइल के लिए डेटा नहीं मिला: {token}")
+                        await update.message.reply_text(f"क्षमा करें, बैच में एक फ़ाइल के लिए डेटा नहीं मिला: `{token}`")
+                
                 await update.message.reply_text("सभी बैच फ़ाइलें भेजी गईं!")
+                
+                # 2 मिनट बाद फ़ाइलें ऑटो-डिलीट करें
+                await asyncio.sleep(120) # 120 seconds = 2 minutes
+                for msg_id in sent_message_ids:
+                    try:
+                        await context.bot.delete_message(chat_id=update.message.chat_id, message_id=msg_id)
+                        logger.info(f"Auto-deleted batch file message {msg_id} for user {user.id}")
+                    except Exception as e:
+                        logger.warning(f"Could not auto-delete batch file message {msg_id} for user {user.id}: {e}")
+
                 # बैच को एक बार भेजने के बाद हटा दें ताकि इसे दोबारा एक्सेस न किया जा सके
                 batches_collection.delete_one({"_id": batch_id})
                 logger.info(f"Batch {batch_id} deleted from MongoDB after sending.")
@@ -134,23 +162,39 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 telegram_file_id = file_data["telegram_file_id"]
                 original_filename = file_data["original_filename"]
                 try:
+                    # फ़ॉरवर्ड बटन जोड़ें
+                    forward_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("इस फ़ाइल को कहीं और फॉरवर्ड करें", switch_inline_query_current_chat=telegram_file_id)]])
+
                     if file_data.get("file_type") == "video": 
-                        await update.message.reply_video(
+                        sent_msg = await update.message.reply_video(
                             video=telegram_file_id,
-                            caption=f"यहाँ आपकी वीडियो है: {original_filename}",
-                            filename=original_filename 
+                            caption=f"यहाँ आपकी वीडियो है: `{original_filename}`\n\nकॉपीराइट मुद्दों से बचने के लिए, कृपया इस फ़ाइल को कहीं और फॉरवर्ड करें या डाउनलोड करें। यह फ़ाइल 2 मिनट में ऑटो-डिलीट हो जाएगी।",
+                            filename=original_filename,
+                            parse_mode='MarkdownV2',
+                            reply_markup=forward_keyboard
                         )
                         logger.info(f"Video {original_filename} sent to user {user.id}")
                     else: # assume it's a document
-                        await update.message.reply_document(
+                        sent_msg = await update.message.reply_document(
                             document=telegram_file_id,
-                            caption=f"यहाँ आपकी फ़ाइल है: {original_filename}",
-                            filename=original_filename 
+                            caption=f"यहाँ आपकी फ़ाइल है: `{original_filename}`\n\nकॉपीराइट मुद्दों से बचने के लिए, कृपया इस फ़ाइल को कहीं और फॉरवर्ड करें या डाउनलोड करें। यह फ़ाइल 2 मिनट में ऑटो-डिलीट हो जाएगी।",
+                            filename=original_filename,
+                            parse_mode='MarkdownV2',
+                            reply_markup=forward_keyboard
                         )
                         logger.info(f"Document {original_filename} sent to user {user.id}")
+                    
+                    # 2 मिनट बाद फ़ाइल ऑटो-डिलीट करें
+                    await asyncio.sleep(120) # 120 seconds = 2 minutes
+                    try:
+                        await context.bot.delete_message(chat_id=update.message.chat_id, message_id=sent_msg.message_id)
+                        logger.info(f"Auto-deleted single file message {sent_msg.message_id} for user {user.id}")
+                    except Exception as e:
+                        logger.warning(f"Could not auto-delete single file message {sent_msg.message_id} for user {user.id}: {e}")
+
                 except Exception as e:
                     logger.error(f"Error sending file {original_filename} to user {user.id}: {e}")
-                    await update.message.reply_text(f"क्षमा करें, फ़ाइल नहीं भेजी जा सकी। एक त्रुटि हुई: {e}")
+                    await update.message.reply_text(f"क्षमा करें, फ़ाइल नहीं भेजी जा सकी। एक त्रुटि हुई: `{e}`")
                 return 
             else:
                 logger.warning(f"Invalid permanent token {original_permanent_token} requested by user {user.id} after verification.")
@@ -179,6 +223,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def send_welcome_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info("Sending welcome message.")
+    
+    # बॉट का नाम और फोटो
+    bot_name = "आपका फाइल स्टोर बॉट" # आप यहां अपने बॉट का नाम बदल सकते हैं
+    welcome_text = (
+        f"👋 नमस्ते! मैं **{bot_name}** हूँ, आपका फ़ाइल साझा करने वाला बॉट। "
+        "मैं आपकी फ़ाइलों के लिए साझा करने योग्य लिंक बनाने में आपकी मदद कर सकता हूँ।"
+    )
+
     keyboard = [
         [InlineKeyboardButton("Updates Channel", url=UPDATES_CHANNEL_LINK)],
         [InlineKeyboardButton("Help", callback_data="help_command")]
@@ -186,14 +238,25 @@ async def send_welcome_message(update: Update, context: ContextTypes.DEFAULT_TYP
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if update.message:
-        await update.message.reply_text(
-            "👋 नमस्ते! मैं आपकी फ़ाइल साझा करने वाला बॉट हूँ। मैं आपकी फ़ाइलों के लिए साझा करने योग्य लिंक बनाने में आपकी मदद कर सकता हूँ।",
-            reply_markup=reply_markup
-        )
+        if START_PHOTO_URL:
+            await update.message.reply_photo(
+                photo=START_PHOTO_URL,
+                caption=welcome_text,
+                reply_markup=reply_markup,
+                parse_mode='MarkdownV2'
+            )
+        else:
+            await update.message.reply_text(
+                welcome_text,
+                reply_markup=reply_markup,
+                parse_mode='MarkdownV2'
+            )
     elif update.callback_query:
+        # Callback query के लिए फोटो नहीं भेज सकते, केवल टेक्स्ट एडिट कर सकते हैं
         await update.callback_query.message.edit_text(
-            "👋 नमस्ते! मैं आपकी फ़ाइल साझा करने वाला बॉट हूँ। मैं आपकी फ़ाइलों के लिए साझा करने योग्य लिंक बनाने में आपकी मदद कर सकता हूँ।",
-            reply_markup=reply_markup
+            welcome_text,
+            reply_markup=reply_markup,
+            parse_mode='MarkdownV2'
         )
     logger.info("Welcome message sent.")
 
@@ -204,8 +267,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "यहाँ वे कमांड दिए गए हैं जिनका आप उपयोग कर सकते हैं:\n\n"
         "➡️ /start - स्वागत संदेश प्राप्त करें।\n"
         "➡️ /link - एक फ़ाइल के लिए साझा करने योग्य लिंक प्राप्त करें।\n"
-        "➡️ /batch - एक साथ कई फ़ाइलों के लिए लिंक जनरेट करें।\n\n"
-        "कमांड /link या /batch का उपयोग करने के बाद मुझे कोई भी डॉक्यूमेंट या वीडियो भेजें।"
+        "➡️ /batch - एक साथ कई फ़ाइलों के लिए लिंक जनरेट करें।\n"
+        "➡️ /mylink - आपके द्वारा जनरेट की गई लिंक्स की संख्या देखें।\n\n"
+        "कमांड `/link` या `/batch` का उपयोग करने के बाद मुझे कोई भी डॉक्यूमेंट या वीडियो भेजें।"
     )
     
     if update.callback_query:
@@ -221,7 +285,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         logger.info("Help message sent via callback edit.")
     else: 
-        await update.message.reply_text(help_text)
+        await update.message.reply_text(help_text, parse_mode='MarkdownV2')
         logger.info("Help message sent via direct command.")
 
 async def back_to_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -236,11 +300,13 @@ async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     user_id = user.id
     if user_id in batch_files_in_progress:
         del batch_files_in_progress[user_id]
-        logger.info(f"Cleared pending batch for user {user_id} when /link was used.")
-    context.user_data['current_mode'] = 'single_file'
+        logger.info(f"Cleared pending batch for user {user.id} when /link was used.")
+    
+    # Set current_mode to 'single_file_pending' to allow file handling only after /link
+    context.user_data['current_mode'] = 'single_file_pending'
     await update.message.reply_text("कृपया मुझे वह फ़ाइल (डॉक्यूमेंट या वीडियो) भेजें जिसकी आप लिंक जनरेट करना चाहते हैं।")
 
-async def batch_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def batch_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> ConversationHandler.END:
     user = update.effective_user
     await update_user_info(user.id, user.username, user.first_name)
     logger.info(f"/batch command received from {user.id}")
@@ -252,7 +318,8 @@ async def batch_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     else:
         batch_files_in_progress[user_id] = [] 
 
-    context.user_data['current_mode'] = 'batch_file'
+    # Set current_mode to 'batch_file_pending' to allow file handling only after /batch
+    context.user_data['current_mode'] = 'batch_file_pending'
 
     keyboard = [[InlineKeyboardButton("लिंक जनरेट करें", callback_data="generate_batch_links")]]
     keyboard.append([InlineKeyboardButton("रद्द करें", callback_data="cancel_batch_generation")]) 
@@ -266,14 +333,23 @@ async def batch_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
     return SENDING_BATCH_FILES 
 
-async def handle_batch_file_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_batch_file_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     await update_user_info(user.id, user.username, user.first_name)
     user_id = user.id
+    
+    # Only process if in batch mode
+    if context.user_data.get('current_mode') != 'batch_file_pending':
+        logger.warning(f"File received from {user_id} not in batch mode. Ignoring for batch.")
+        # If not in batch mode, don't return SENDING_BATCH_FILES, let other handlers manage.
+        await update.message.reply_text("आपने `/batch` कमांड का उपयोग नहीं किया है। कृपया लिंक जनरेट करने के लिए `/link` या `/batch` कमांड का उपयोग करें।")
+        return ConversationHandler.END # End the conversation if not in correct state
+
     logger.info(f"Batch file received from {user_id}")
+    
     if user_id not in batch_files_in_progress:
-        logger.warning(f"File received for batch from {user_id} but no batch started. Falling back to single file.")
-        return await handle_file(update, context) 
+        logger.warning(f"File received for batch from {user_id} but no batch started in dict. Reinitializing.")
+        batch_files_in_progress[user_id] = []
 
     file = None
     file_type = ""
@@ -284,9 +360,9 @@ async def handle_batch_file_received(update: Update, context: ContextTypes.DEFAU
         file = update.message.video
         file_type = "video"
     else:
-        logger.info(f"Unsupported file type received from {user_id} during batch.")
+        logger.info(f"Unsupported file type received from {user.id} during batch.")
         await update.message.reply_text("कृपया एक डॉक्यूमेंट या एक वीडियो भेजें। अन्य फ़ाइल प्रकार बैच के लिए समर्थित नहीं हैं।")
-        return 
+        return SENDING_BATCH_FILES # Stay in the batch state
 
     original_filename = file.file_name if file.file_name else f"unnamed_{file_type}"
     user_chat_id = update.message.chat_id
@@ -306,12 +382,12 @@ async def handle_batch_file_received(update: Update, context: ContextTypes.DEFAU
         if not permanent_telegram_file_id:
             logger.error(f"Failed to get file ID from forwarded message for file {original_filename}")
             await update.message.reply_text("फ़ॉरवर्डेड मैसेज से फ़ाइल ID प्राप्त करने में विफल।")
-            return 
+            return SENDING_BATCH_FILES 
 
     except Exception as e:
         logger.error(f"Error forwarding file {original_filename} to storage channel: {e}")
-        await update.message.reply_text(f"स्टोरेज चैनल पर फ़ाइल फ़ॉरवर्ड करने में त्रुटि: {e}")
-        return 
+        await update.message.reply_text(f"स्टोरेज चैनल पर फ़ाइल फ़ॉरवर्ड करने में त्रुटि: `{e}`")
+        return SENDING_BATCH_FILES 
 
     # स्थायी टोकन जनरेट करें और MongoDB में सहेजें
     permanent_token = str(uuid.uuid4())
@@ -322,10 +398,18 @@ async def handle_batch_file_received(update: Update, context: ContextTypes.DEFAU
         "original_filename": original_filename,
         "user_chat_id": user_chat_id,
         "upload_time": datetime.datetime.now(), 
-        "file_type": file_type
+        "file_type": file_type,
+        "generated_by": user_id # Track who generated the link
     }
     files_collection.insert_one(file_info)
     logger.info(f"File {original_filename} (permanent token: {permanent_token}) saved to MongoDB.")
+
+    # उपयोगकर्ता की जनरेट की गई लिंक्स की संख्या बढ़ाएँ
+    user_links_collection.update_one(
+        {"_id": user_id},
+        {"$inc": {"link_count": 1}},
+        upsert=True
+    )
 
     batch_files_in_progress[user_id].append(permanent_token) 
 
@@ -351,7 +435,8 @@ async def generate_batch_links(update: Update, context: ContextTypes.DEFAULT_TYP
     
     if user_id not in batch_files_in_progress or not batch_files_in_progress[user_id]:
         await update.callback_query.message.reply_text("कोई फ़ाइलें नहीं मिलीं जिनके लिए लिंक जनरेट की जा सकें। कृपया पहले फ़ाइलें भेजें।")
-        logger.warning(f"Generate batch links pressed but no files in progress for user {user_id}")
+        logger.warning(f"Generate batch links pressed but no files in progress for user {user.id}")
+        context.user_data.pop('current_mode', None)
         return ConversationHandler.END 
     
     # एक नया बैच ID जनरेट करें और MongoDB में सहेजें
@@ -360,7 +445,8 @@ async def generate_batch_links(update: Update, context: ContextTypes.DEFAULT_TYP
         "_id": batch_id, # बैच ID को _id के रूप में उपयोग करें
         "permanent_tokens": batch_files_in_progress[user_id],
         "user_id": user_id,
-        "creation_time": datetime.datetime.now()
+        "creation_time": datetime.datetime.now(),
+        "is_batch": True # Flag to distinguish from single file links
     }
     batches_collection.insert_one(batch_info)
     logger.info(f"Batch {batch_id} saved to MongoDB with {len(batch_files_in_progress[user_id])} files.")
@@ -409,9 +495,15 @@ async def cancel_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     await update_user_info(user.id, user.username, user.first_name)
-    if context.user_data.get('current_mode') == 'batch_file':
+
+    # Only process if current_mode is 'single_file_pending' or 'batch_file_pending'
+    if context.user_data.get('current_mode') == 'batch_file_pending':
         logger.info(f"File received in batch mode from {user.id}. Passing to batch handler.")
         return await handle_batch_file_received(update, context)
+    elif context.user_data.get('current_mode') != 'single_file_pending':
+        logger.info(f"File received from {user.id} but not in /link or /batch mode. Ignoring.")
+        await update.message.reply_text("लिंक जनरेट करने के लिए कृपया `/link` या `/batch` कमांड का उपयोग करें।")
+        return
 
     logger.info(f"Single file received from {user.id}")
     file = None
@@ -422,34 +514,54 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     elif update.message.video:
         file = update.message.video
         file_type = "video"
+    # Added filters for photos and APKs as requested (assuming they should be handled like documents)
+    elif update.message.photo:
+        # For photos, Telegram provides multiple sizes. We usually take the largest.
+        file = update.message.photo[-1] 
+        file_type = "photo"
+    elif update.message.document and update.message.document.file_name and update.message.document.file_name.endswith('.apk'):
+        file = update.message.document
+        file_type = "apk"
     else:
         logger.info(f"Unsupported file type received from {user.id} in single mode.")
-        await update.message.reply_text("कृपया एक डॉक्यूमेंट या एक वीडियो भेजें।")
+        await update.message.reply_text("कृपया एक डॉक्यूमेंट, वीडियो, फोटो या APK फ़ाइल भेजें।")
+        context.user_data.pop('current_mode', None) # Reset mode
         return
 
     original_filename = file.file_name if file.file_name else f"unnamed_{file_type}"
     user_chat_id = update.message.chat_id
 
     try:
-        sent_message = await context.bot.forward_message(
-            chat_id=PUBLIC_CHANNEL_ID, 
-            from_chat_id=user_chat_id,
-            message_id=update.message.message_id
-        )
-        permanent_telegram_file_id = None
-        if sent_message.document:
-            permanent_telegram_file_id = sent_message.document.file_id
-        elif sent_message.video:
-            permanent_telegram_file_id = sent_message.video.file_id
+        # For photos, you generally forward by file_id directly, not the entire message
+        if file_type == "photo":
+            sent_message = await context.bot.send_photo(
+                chat_id=PUBLIC_CHANNEL_ID,
+                photo=file.file_id,
+                caption=f"फोटो ({user_chat_id})" # Add some identifier
+            )
+            permanent_telegram_file_id = sent_message.photo[-1].file_id # Get the file_id of the largest photo
+        else:
+            sent_message = await context.bot.forward_message(
+                chat_id=PUBLIC_CHANNEL_ID, 
+                from_chat_id=user_chat_id,
+                message_id=update.message.message_id
+            )
+            permanent_telegram_file_id = None
+            if sent_message.document:
+                permanent_telegram_file_id = sent_message.document.file_id
+            elif sent_message.video:
+                permanent_telegram_file_id = sent_message.video.file_id
         
         if not permanent_telegram_file_id:
             logger.error(f"Failed to get file ID from forwarded message for single file {original_filename}")
             await update.message.reply_text("फ़ॉरवर्डेड मैसेज से फ़ाइल ID प्राप्त करने में विफल।")
+            context.user_data.pop('current_mode', None) # Reset mode
             return
 
     except Exception as e:
         logger.error(f"Error forwarding single file {original_filename} to storage channel: {e}")
-        await update.message.reply_text(f"स्टोरेज चैनल पर फ़ाइल फ़ॉरवर्ड करने में त्रुटि: {e}")
+        await update.message.reply_text(f"स्टोरेज चैनल पर फ़ाइल फ़ॉरवर्ड करने में त्रुटि: `{e}`")
+        context.user_data.pop('current_mode', None) # Reset mode
         return
 
     # स्थायी टोकन जनरेट करें और MongoDB में सहेजें
@@ -461,10 +573,18 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         "original_filename": original_filename,
         "user_chat_id": user_chat_id,
         "upload_time": datetime.datetime.now(), 
-        "file_type": file_type
+        "file_type": file_type,
+        "generated_by": user.id # Track who generated the link
     }
     files_collection.insert_one(file_info)
     logger.info(f"Single file {original_filename} (permanent token: {permanent_token}) saved to MongoDB.")
+
+    # उपयोगकर्ता की जनरेट की गई लिंक्स की संख्या बढ़ाएँ
+    user_links_collection.update_one(
+        {"_id": user.id},
+        {"$inc": {"link_count": 1}},
+        upsert=True
+    )
 
     # अब Apps Script URL बनाएं जो ब्लॉगर पर रीडायरेक्ट करेगा
     apps_script_redirect_url = f"{GOOGLE_APPS_SCRIPT_API_URL}?token={permanent_token}" 
@@ -492,11 +612,11 @@ async def copy_link_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if data.startswith("copy_batch_link_"):
         batch_id = data[len("copy_batch_link_"):]
         apps_script_url = f"{GOOGLE_APPS_SCRIPT_API_URL}?batch_token={batch_id}"
-        message_text = f"यह आपकी बैच फ़ाइलों के लिए स्थायी लिंक है:\n\n`{apps_script_url}`\n\nइसे कॉपी करने के लिए टैप करके रखें।"
+        message_text = f"यह आपकी बैच फ़ाइलों के लिए स्थायी लिंक है:\n\n`{escape_markdown_v2(apps_script_url)}`\n\nइसे कॉपी करने के लिए टैप करके रखें।"
     elif data.startswith("copy_link_"):
         permanent_token = data[len("copy_link_"):]
         apps_script_url = f"{GOOGLE_APPS_SCRIPT_API_URL}?token={permanent_token}"
-        message_text = f"यह आपकी फ़ाइल के लिए स्थायी लिंक है:\n\n`{apps_script_url}`\n\nइसे कॉपी करने के लिए टैप करके रखें।"
+        message_text = f"यह आपकी फ़ाइल के लिए स्थायी लिंक है:\n\n`{escape_markdown_v2(apps_script_url)}`\n\nइसे कॉपी करने के लिए टैप करके रखें।"
     else:
         message_text = "कॉपी करने के लिए अमान्य लिंक प्रकार।"
     
@@ -582,13 +702,29 @@ async def dellink_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # यदि कोई बैच खाली हो जाता है, तो उसे हटा दें
     batches_collection.delete_many({"permanent_tokens": {"$size": 0}})
 
+    # उपयोगकर्ता के लिंक काउंट को भी अपडेट करें
     if delete_result_file.deleted_count > 0:
+        file_info = files_collection.find_one({"token": token_to_delete}) # Find the file data before deletion
+        if file_info and "generated_by" in file_info:
+            user_links_collection.update_one(
+                {"_id": file_info["generated_by"]},
+                {"$inc": {"link_count": -1}}
+            )
         await update.message.reply_text(f"टोकन `{token_to_delete}` और संबंधित फ़ाइल जानकारी सफलतापूर्वक हटा दी गई।")
         logger.info(f"Token {token_to_delete} deleted by admin {user.id}.")
     else:
         await update.message.reply_text(f"टोकन `{token_to_delete}` नहीं मिला।")
         logger.warning(f"Dellink command: Token {token_to_delete} not found for deletion by admin {user.id}.")
 
+async def my_link_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    await update_user_info(user.id, user.username, user.first_name)
+    logger.info(f"/mylink command received from {user.id}")
+
+    user_link_data = user_links_collection.find_one({"_id": user.id})
+    link_count = user_link_data["link_count"] if user_link_data and "link_count" in user_link_data else 0
+
+    await update.message.reply_text(f"आपने अब तक `{link_count}` लिंक्स जनरेट की हैं।")
 
 def main() -> None:
     required_env_vars = ["TELEGRAM_BOT_TOKEN", "MONGO_URI", "PUBLIC_CHANNEL_USERNAME", "PUBLIC_CHANNEL_ID", "GOOGLE_APPS_SCRIPT_API_URL", "ADMIN_USER_ID"] 
@@ -618,6 +754,7 @@ def main() -> None:
         entry_points=[CommandHandler("batch", batch_start)], 
         states={
             SENDING_BATCH_FILES: [
+                # MessageHandler will only trigger if current_mode is set to 'batch_file_pending'
                 MessageHandler(filters.ATTACHMENT, handle_batch_file_received), 
                 CallbackQueryHandler(generate_batch_links, pattern="^generate_batch_links$"), 
                 CallbackQueryHandler(cancel_batch, pattern="^cancel_batch_generation$"), 
@@ -628,12 +765,17 @@ def main() -> None:
     )
     application.add_handler(batch_conv_handler)
 
+    # This MessageHandler will only trigger if current_mode is 'single_file_pending'
+    # It will also capture any attachments sent without /link or /batch, and handle them by asking to use commands.
     application.add_handler(MessageHandler(filters.ATTACHMENT, handle_file))
-    
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text("फ़ाइल लिंक जनरेट करने के लिए, कृपया `/link` या `/batch` कमांड का उपयोग करें।"), None))
+
+
     # New command handlers
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("broadcast", broadcast_command))
     application.add_handler(CommandHandler("dellink", dellink_command))
+    application.add_handler(CommandHandler("mylink", my_link_command))
     
     # New CallbackQueryHandler for copy link buttons
     application.add_handler(CallbackQueryHandler(copy_link_callback, pattern="^copy_link_.*"))
@@ -645,3 +787,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
