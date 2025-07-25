@@ -59,6 +59,9 @@ SECURE_LINK_FILE_PENDING = 2
 SECURE_LINK_PIN_PENDING = 3
 SECURE_LINK_PIN_VERIFICATION = 4
 
+# --- Conversation State for Single Link Command ---
+SINGLE_LINK_FILE_PENDING = 5
+
 
 # --- Flask App for Health Check ---
 flask_app = Flask(__name__)
@@ -151,6 +154,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                                     filename=original_filename,
                                     parse_mode='MarkdownV2',
                                 )
+                            elif file_data.get("file_type") == "voice":
+                                sent_msg = await update.message.reply_voice(
+                                    voice=telegram_file_id,
+                                    caption=caption_text_template,
+                                    filename=original_filename,
+                                    parse_mode='MarkdownV2',
+                                )
+                            elif file_data.get("file_type") == "audio":
+                                sent_msg = await update.message.reply_audio(
+                                    audio=telegram_file_id,
+                                    caption=caption_text_template,
+                                    filename=original_filename,
+                                    parse_mode='MarkdownV2',
+                                )
                             else: # assume it's a document/apk
                                 sent_msg = await update.message.reply_document(
                                     document=telegram_file_id,
@@ -228,6 +245,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                             parse_mode='MarkdownV2',
                         )
                         logger.info(f"Photo {original_filename} sent to user {user.id}")
+                    elif file_data.get("file_type") == "voice":
+                        sent_msg = await update.message.reply_voice(
+                            voice=telegram_file_id,
+                            caption=caption_text_template,
+                            filename=original_filename,
+                            parse_mode='MarkdownV2',
+                        )
+                        logger.info(f"Voice {original_filename} sent to user {user.id}")
+                    elif file_data.get("file_type") == "audio":
+                        sent_msg = await update.message.reply_audio(
+                            audio=telegram_file_id,
+                            caption=caption_text_template,
+                            filename=original_filename,
+                            parse_mode='MarkdownV2',
+                        )
+                        logger.info(f"Audio {original_filename} sent to user {user.id}")
                     else: # assume it's a document/apk
                         sent_msg = await update.message.reply_document(
                             document=telegram_file_id,
@@ -374,7 +407,7 @@ async def back_to_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.callback_query.answer()
     await send_welcome_message(update, context)
 
-async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: # Return type changed to int for ConversationHandler
     user = update.effective_user
     await update_user_info(user.id, user.username, user.first_name)
     logger.info(f"/link command received from {user.id}")
@@ -391,8 +424,10 @@ async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
     # Set current_mode to 'single_file_pending' to allow file handling only after /link
-    context.user_data['current_mode'] = 'single_file_pending'
-    await update.message.reply_text("कृपया मुझे वह फ़ाइल (डॉक्यूमेंट या वीडियो) भेजें जिसकी आप लिंक जनरेट करना चाहते हैं।") # Simple text, no special chars that need escaping
+    context.user_data['current_mode'] = SINGLE_LINK_FILE_PENDING # Using the new state
+    await update.message.reply_text("कृपया मुझे वह फ़ाइल (डॉक्यूमेंट, वीडियो, फोटो, ऑडियो या APK) भेजें जिसकी आप लिंक जनरेट करना चाहते हैं।")
+    return SINGLE_LINK_FILE_PENDING # Enter the state for single file processing
+
 
 async def batch_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> ConversationHandler.END:
     user = update.effective_user
@@ -422,7 +457,7 @@ async def batch_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Con
 
     # Manual escaping for MarkdownV2 specific characters in the static text
     await update.message.reply_text(
-        "ठीक है, मुझे एक\-एक करके फ़ाइलें \\(डॉक्यूमेंट या वीडियो\\) भेजें\\. "
+        "ठीक है, मुझे एक\-एक करके फ़ाइलें \\(डॉक्यूमेंट, वीडियो, फोटो, ऑडियो या APK\\) भेजें\\. "
         "प्रत्येक फ़ाइल भेजने के बाद मैं आपको सूचित करूँगा\\.\n\n"
         "जब आप सभी फ़ाइलें भेज दें, तो 'लिंक जनरेट करें' बटन पर क्लिक करें\\. यदि आप रद्द करना चाहते हैं तो 'रद्द करें' दबाएं\\.",
         reply_markup=reply_markup,
@@ -453,22 +488,30 @@ async def handle_batch_file_received(update: Update, context: ContextTypes.DEFAU
     if update.message.document:
         file = update.message.document
         file_type = "document"
+        if file.file_name and file.file_name.lower().endswith('.apk'):
+            file_type = "apk" # Specific type for APK
     elif update.message.video:
         file = update.message.video
         file_type = "video"
     elif update.message.photo: # Handle photos in batch too
-        file = update.message.photo[-1]
+        file = update.message.photo[-1] # Get the largest photo size
         file_type = "photo"
+    elif update.message.voice: # Handle voice messages
+        file = update.message.voice
+        file_type = "voice"
+    elif update.message.audio: # Handle audio files (songs)
+        file = update.message.audio
+        file_type = "audio"
     else:
         logger.info(f"Unsupported file type received from {user.id} during batch.")
-        await update.message.reply_text("कृपया एक डॉक्यूमेंट, वीडियो या फोटो भेजें। अन्य फ़ाइल प्रकार बैच के लिए समर्थित नहीं हैं।")
+        await update.message.reply_text("कृपया एक डॉक्यूमेंट, वीडियो, फोटो, ऑडियो या APK भेजें। अन्य फ़ाइल प्रकार बैच के लिए समर्थित नहीं हैं।")
         return SENDING_BATCH_FILES # Stay in the batch state
 
     original_filename = file.file_name if file.file_name else f"unnamed_{file_type}"
     user_chat_id = update.message.chat_id
 
     try:
-        # For photos, you generally send_photo directly, not forward
+        # For photos, voice, audio, generally send directly using their specific methods
         if file_type == "photo":
             sent_message = await context.bot.send_photo(
                 chat_id=PUBLIC_CHANNEL_ID,
@@ -476,7 +519,22 @@ async def handle_batch_file_received(update: Update, context: ContextTypes.DEFAU
                 caption=f"फोटो \\({user_chat_id}\\)" # Add some identifier, escaped ( )
             )
             permanent_telegram_file_id = sent_message.photo[-1].file_id # Get the file_id of the largest photo
-        else: # For document, video, apk
+        elif file_type == "voice":
+            sent_message = await context.bot.send_voice(
+                chat_id=PUBLIC_CHANNEL_ID,
+                voice=file.file_id,
+                caption=f"वॉइस मैसेज \\({user_chat_id}\\)"
+            )
+            permanent_telegram_file_id = sent_message.voice.file_id
+        elif file_type == "audio":
+            sent_message = await context.bot.send_audio(
+                chat_id=PUBLIC_CHANNEL_ID,
+                audio=file.file_id,
+                caption=f"ऑडियो \\({user_chat_id}\\)",
+                title=original_filename if original_filename != f"unnamed_{file_type}" else None # Set title if available
+            )
+            permanent_telegram_file_id = sent_message.audio.file_id
+        else: # For document, video, apk - use forward_message
             sent_message = await context.bot.forward_message(
                 chat_id=PUBLIC_CHANNEL_ID,
                 from_chat_id=user_chat_id,
@@ -489,7 +547,7 @@ async def handle_batch_file_received(update: Update, context: ContextTypes.DEFAU
                 permanent_telegram_file_id = sent_message.video.file_id
 
         if not permanent_telegram_file_id:
-            logger.error(f"Failed to get file ID from forwarded message for file {original_filename}")
+            logger.error(f"Failed to get file ID from forwarded/sent message for file {original_filename}")
             await update.message.reply_text("फ़ॉरवर्डेड मैसेज से फ़ाइल ID प्राप्त करने में विफल।")
             return SENDING_BATCH_FILES
 
@@ -586,7 +644,7 @@ async def cancel_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     user_id = user.id
     if user_id in batch_files_in_progress:
         del batch_files_in_progress[user_id]
-        logger.info(f"Cleared batch in progress for user {user_id}.")
+        logger.info(f"Cleared batch in progress for user {user.id}.")
     context.user_data.pop('current_mode', None)
 
     if update.callback_query:
@@ -601,22 +659,16 @@ async def cancel_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
     return ConversationHandler.END
 
-async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: # Changed return type to int for ConversationHandler
     user = update.effective_user
     await update_user_info(user.id, user.username, user.first_name)
 
-    # Only process if current_mode is 'single_file_pending' or 'batch_file_pending' or SECURE_LINK_FILE_PENDING
-    if context.user_data.get('current_mode') == 'batch_file_pending':
-        logger.info(f"File received in batch mode from {user.id}. Passing to batch handler.")
-        return await handle_batch_file_received(update, context)
-    elif context.user_data.get('current_mode') == SECURE_LINK_FILE_PENDING:
-        logger.info(f"File received in secure link mode from {user.id}. Passing to secure link file handler.")
-        return await handle_secure_link_file_received(update, context)
-    elif context.user_data.get('current_mode') != 'single_file_pending':
-        logger.info(f"File received from {user.id} but not in /link or /batch or /securelink mode. Ignoring.")
-        await update.message.reply_text("फ़ाइल लिंक जनरेट करने के लिए, कृपया `/link`, `/batch` या `/securelink` कमांड का उपयोग करें।", parse_mode='MarkdownV2')
+    # This handler is now specifically for SINGLE_LINK_FILE_PENDING state
+    if context.user_data.get('current_mode') != SINGLE_LINK_FILE_PENDING:
+        logger.info(f"File received from {user.id} but not in /link mode. Ignoring.")
+        await update.message.reply_text("फ़ाइल लिंक जनरेट करने के लिए, कृपया `/link` कमांड का उपयोग करें।", parse_mode='MarkdownV2')
         context.user_data.pop('current_mode', None) # Reset mode
-        return
+        return ConversationHandler.END # End conversation
 
     logger.info(f"Single file received from {user.id}")
     file = None
@@ -624,7 +676,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if update.message.document:
         file = update.message.document
         file_type = "document"
-        if file.file_name and file.file_name.endswith('.apk'):
+        if file.file_name and file.file_name.lower().endswith('.apk'):
             file_type = "apk" # Specific type for APK
     elif update.message.video:
         file = update.message.video
@@ -633,17 +685,23 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         # For photos, Telegram provides multiple sizes. We usually take the largest.
         file = update.message.photo[-1]
         file_type = "photo"
+    elif update.message.voice: # Added for voice messages
+        file = update.message.voice
+        file_type = "voice"
+    elif update.message.audio: # Added for audio files (songs)
+        file = update.message.audio
+        file_type = "audio"
     else:
         logger.info(f"Unsupported file type received from {user.id} in single mode.")
-        await update.message.reply_text("कृपया एक डॉक्यूमेंट, वीडियो, फोटो या APK फ़ाइल भेजें।")
+        await update.message.reply_text("कृपया एक डॉक्यूमेंट, वीडियो, फोटो, ऑडियो या APK फ़ाइल भेजें।")
         context.user_data.pop('current_mode', None) # Reset mode
-        return
+        return ConversationHandler.END # End conversation
 
     original_filename = file.file_name if file.file_name else f"unnamed_{file_type}"
     user_chat_id = update.message.chat_id
 
     try:
-        # For photos, you generally send_photo directly, not forward
+        # For photos, voice, audio, generally send directly using their specific methods
         if file_type == "photo":
             sent_message = await context.bot.send_photo(
                 chat_id=PUBLIC_CHANNEL_ID,
@@ -651,7 +709,22 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 caption=f"फोटो \\({user_chat_id}\\)" # Add some identifier, escaped ( )
             )
             permanent_telegram_file_id = sent_message.photo[-1].file_id # Get the file_id of the largest photo
-        else: # For document, video, apk
+        elif file_type == "voice":
+            sent_message = await context.bot.send_voice(
+                chat_id=PUBLIC_CHANNEL_ID,
+                voice=file.file_id,
+                caption=f"वॉइस मैसेज \\({user_chat_id}\\)"
+            )
+            permanent_telegram_file_id = sent_message.voice.file_id
+        elif file_type == "audio":
+            sent_message = await context.bot.send_audio(
+                chat_id=PUBLIC_CHANNEL_ID,
+                audio=file.file_id,
+                caption=f"ऑडियो \\({user_chat_id}\\)",
+                title=original_filename if original_filename != f"unnamed_{file_type}" else None # Set title if available
+            )
+            permanent_telegram_file_id = sent_message.audio.file_id
+        else: # For document, video, apk - use forward_message
             sent_message = await context.bot.forward_message(
                 chat_id=PUBLIC_CHANNEL_ID,
                 from_chat_id=user_chat_id,
@@ -664,17 +737,17 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 permanent_telegram_file_id = sent_message.video.file_id
 
         if not permanent_telegram_file_id:
-            logger.error(f"Failed to get file ID from forwarded message for single file {original_filename}")
+            logger.error(f"Failed to get file ID from forwarded/sent message for single file {original_filename}")
             await update.message.reply_text("फ़ॉरवर्डेड मैसेज से फ़ाइल ID प्राप्त करने में विफल।")
             context.user_data.pop('current_mode', None) # Reset mode
-            return
+            return ConversationHandler.END # End conversation
 
     except Exception as e:
         logger.error(f"Error forwarding single file {original_filename} to storage channel: {e}")
         # Escape the error message itself
         await update.message.reply_text(f"स्टोरेज चैनल पर फ़ाइल फ़ॉरवर्ड करने में त्रुटि: `{escape_markdown_v2(str(e))}`", parse_mode='MarkdownV2')
         context.user_data.pop('current_mode', None) # Reset mode
-        return
+        return ConversationHandler.END # End conversation
 
     # स्थायी टोकन जनरेट करें और MongoDB में सहेजें
     permanent_token = str(uuid.uuid4())
@@ -715,6 +788,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         parse_mode='MarkdownV2'
     )
     context.user_data.pop('current_mode', None)
+    return ConversationHandler.END # End conversation
 
 # --- New Callback Handler for Copy Link ---
 async def copy_link_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -925,6 +999,26 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                         parse_mode='MarkdownV2'
                     )
                 )
+            elif file_type == "voice":
+                 results.append(
+                    InlineQueryResultCachedDocument( # Using document as there's no InlineQueryResultCachedVoice
+                        id=str(uuid.uuid4()),
+                        document_file_id=telegram_file_id,
+                        title=f"वॉइस: {original_filename}",
+                        caption=f"यहाँ आपकी वॉइस है: `{escape_markdown_v2(original_filename)}`",
+                        parse_mode='MarkdownV2'
+                    )
+                )
+            elif file_type == "audio":
+                results.append(
+                    InlineQueryResultCachedDocument( # Using document as there's no InlineQueryResultCachedAudio
+                        id=str(uuid.uuid4()),
+                        document_file_id=telegram_file_id,
+                        title=f"ऑडियो: {original_filename}",
+                        caption=f"यहाँ आपकी ऑडियो है: `{escape_markdown_v2(original_filename)}`",
+                        parse_mode='MarkdownV2'
+                    )
+                )
             else: # document or apk
                 results.append(
                     InlineQueryResultCachedDocument(
@@ -974,7 +1068,7 @@ async def secure_link_start(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         logger.info(f"Cleared pending batch for user {user.id} when /securelink was used.")
 
     context.user_data['current_mode'] = SECURE_LINK_FILE_PENDING
-    await update.message.reply_text("ठीक है, कृपया मुझे वह फ़ाइल (डॉक्यूमेंट, वीडियो, फोटो या APK) भेजें जिसे आप पिन से सुरक्षित करना चाहते हैं।", parse_mode='MarkdownV2')
+    await update.message.reply_text("ठीक है, कृपया मुझे वह फ़ाइल (डॉक्यूमेंट, वीडियो, फोटो, ऑडियो या APK) भेजें जिसे आप पिन से सुरक्षित करना चाहते हैं।", parse_mode='MarkdownV2')
     return SECURE_LINK_FILE_PENDING
 
 async def handle_secure_link_file_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -995,7 +1089,7 @@ async def handle_secure_link_file_received(update: Update, context: ContextTypes
     if update.message.document:
         file = update.message.document
         file_type = "document"
-        if file.file_name and file.file_name.endswith('.apk'):
+        if file.file_name and file.file_name.lower().endswith('.apk'):
             file_type = "apk"
     elif update.message.video:
         file = update.message.video
@@ -1003,9 +1097,15 @@ async def handle_secure_link_file_received(update: Update, context: ContextTypes
     elif update.message.photo:
         file = update.message.photo[-1]
         file_type = "photo"
+    elif update.message.voice: # Added for voice messages
+        file = update.message.voice
+        file_type = "voice"
+    elif update.message.audio: # Added for audio files (songs)
+        file = update.message.audio
+        file_type = "audio"
     else:
         logger.info(f"Unsupported file type received from {user.id} for secure link.")
-        await update.message.reply_text("कृपया एक डॉक्यूमेंट, वीडियो, फोटो या APK फ़ाइल भेजें। अन्य फ़ाइल प्रकार समर्थित नहीं हैं।", parse_mode='MarkdownV2')
+        await update.message.reply_text("कृपया एक डॉक्यूमेंट, वीडियो, फोटो, ऑडियो या APK फ़ाइल भेजें। अन्य फ़ाइल प्रकार समर्थित नहीं हैं।", parse_mode='MarkdownV2')
         return SECURE_LINK_FILE_PENDING
 
     original_filename = file.file_name if file.file_name else f"unnamed_{file_type}"
@@ -1019,6 +1119,21 @@ async def handle_secure_link_file_received(update: Update, context: ContextTypes
                 caption=f"सुरक्षित फोटो \\({user_chat_id}\\)"
             )
             permanent_telegram_file_id = sent_message.photo[-1].file_id
+        elif file_type == "voice":
+            sent_message = await context.bot.send_voice(
+                chat_id=PUBLIC_CHANNEL_ID,
+                voice=file.file_id,
+                caption=f"सुरक्षित वॉइस मैसेज \\({user_chat_id}\\)"
+            )
+            permanent_telegram_file_id = sent_message.voice.file_id
+        elif file_type == "audio":
+            sent_message = await context.bot.send_audio(
+                chat_id=PUBLIC_CHANNEL_ID,
+                audio=file.file_id,
+                caption=f"सुरक्षित ऑडियो \\({user_chat_id}\\)",
+                title=original_filename if original_filename != f"unnamed_{file_type}" else None
+            )
+            permanent_telegram_file_id = sent_message.audio.file_id
         else:
             sent_message = await context.bot.forward_message(
                 chat_id=PUBLIC_CHANNEL_ID,
@@ -1182,6 +1297,20 @@ async def verify_secure_link_pin(update: Update, context: ContextTypes.DEFAULT_T
                     filename=original_filename,
                     parse_mode='MarkdownV2',
                 )
+            elif file_type == "voice":
+                sent_msg = await update.message.reply_voice(
+                    voice=telegram_file_id,
+                    caption=caption_text_template,
+                    filename=original_filename,
+                    parse_mode='MarkdownV2',
+                )
+            elif file_type == "audio":
+                sent_msg = await update.message.reply_audio(
+                    audio=telegram_file_id,
+                    caption=caption_text_template,
+                    filename=original_filename,
+                    parse_mode='MarkdownV2',
+                )
             else:
                 sent_msg = await update.message.reply_document(
                     document=telegram_file_id,
@@ -1262,7 +1391,23 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(help_command, pattern="^help_command$"))
     application.add_handler(CommandHandler("help", help_command)) # Added CommandHandler for /help
     application.add_handler(CallbackQueryHandler(back_to_welcome, pattern="^back_to_welcome$"))
-    application.add_handler(CommandHandler("link", link_command))
+    
+    # Conversation handler for /link (single file)
+    single_file_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("link", link_command)],
+        states={
+            SINGLE_LINK_FILE_PENDING: [
+                MessageHandler(filters.ATTACHMENT, handle_file),
+                CommandHandler("cancel", lambda u, c: (c.user_data.pop('current_mode', None), u.message.reply_text("एकल फ़ाइल लिंक जनरेशन रद्द कर दिया गया।"))),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text(
+                    "फ़ाइल भेजें, कमांड नहीं। या एकल फ़ाइल लिंक जनरेशन रद्द करने के लिए `/cancel` का उपयोग करें।", parse_mode='MarkdownV2'
+                ))
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", lambda u, c: (c.user_data.pop('current_mode', None), u.message.reply_text("एकल फ़ाइल लिंक जनरेशन रद्द कर दिया गया।")))],
+    )
+    application.add_handler(single_file_conv_handler)
+
 
     batch_conv_handler = ConversationHandler(
         entry_points=[CommandHandler("batch", batch_start)],
@@ -1305,14 +1450,11 @@ def main() -> None:
     application.add_handler(secure_link_conv_handler)
 
 
-    # This MessageHandler will only trigger if current_mode is 'single_file_pending' or 'batch_file_pending' or SECURE_LINK_FILE_PENDING
-    # Any other attachment or text message will be handled by the next MessageHandler
-    application.add_handler(MessageHandler(filters.ATTACHMENT, handle_file))
-    # Add a handler for any text messages that are not commands
-    # This handler needs to be aware of conversation states too.
+    # This MessageHandler for TEXT messages should be last to avoid
+    # interfering with conversation handlers. It catches any text not caught by other handlers.
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text(
-        "फ़ाइल लिंक जनरेट करने के लिए, कृपया `/link`, `/batch` या `/securelink` कमांड का उपयोग करें। यदि आप एक सुरक्षित फ़ाइल का पिन दर्ज कर रहे हैं, तो कृपया केवल पिन भेजें।", parse_mode='MarkdownV2'
-    ), None))
+        "मुझे समझ नहीं आया। फ़ाइल लिंक जनरेट करने के लिए, कृपया `/link`, `/batch` या `/securelink` कमांड का उपयोग करें।", parse_mode='MarkdownV2'
+    )))
 
 
     # New command handlers
