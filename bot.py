@@ -105,9 +105,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if param.startswith("secure_download_"):
             secure_token = param[len("secure_download_"):]
             logger.info(f"Secure download deep link received: {secure_token}")
-            await update.message.reply_text("कृपया इस सुरक्षित फ़ाइल को डाउनलोड करने के लिए पिन दर्ज करें।", parse_mode='MarkdownV2')
+            
+            # Clear other pending modes if any, and set secure link verification mode
+            context.user_data.pop('current_mode', None)
             context.user_data['secure_token_for_verification'] = secure_token
             context.user_data['current_mode'] = SECURE_LINK_PIN_VERIFICATION # Set current_mode for state management
+            
+            await update.message.reply_text("कृपया इस सुरक्षित फ़ाइल को डाउनलोड करने के लिए पिन दर्ज करें।", parse_mode='MarkdownV2')
             return SECURE_LINK_PIN_VERIFICATION # Enter state for PIN verification
         elif param.startswith("download_batch_"):
             # यह तब होता है जब यूजर ब्लॉगर पेज पर बैच सत्यापन के बाद वापस बॉट पर रीडायरेक्ट होता है।
@@ -180,7 +184,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                         except Exception as e:
                             logger.error(f"Error sending batch file {original_filename} to user {user.id}: {e}")
                             # Escape the error message itself
-                            await update.message.reply_text(f"क्षमा करें, बैच फ़ाइल `{escaped_filename}` नहीं भेजी जा सकी। एक त्रुटि हुई: `{escape_markdown_v2(str(e))}`", parse_mode='MarkdownV2')
+                            await update.message.reply_text(f"क्षमा करें, बैच फ़ाइल `{escape_markdown_v2(original_filename)}` नहीं भेजी जा सकी। एक त्रुटि हुई: `{escape_markdown_v2(str(e))}`", parse_mode='MarkdownV2')
                     else:
                         await update.message.reply_text(f"क्षमा करें, बैच में एक फ़ाइल के लिए डेटा नहीं मिला: `{escape_markdown_v2(token)}`", parse_mode='MarkdownV2')
 
@@ -429,7 +433,7 @@ async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     return SINGLE_LINK_FILE_PENDING # Enter the state for single file processing
 
 
-async def batch_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> ConversationHandler.END:
+async def batch_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: # Changed return type to int for ConversationHandler
     user = update.effective_user
     await update_user_info(user.id, user.username, user.first_name)
     logger.info(f"/batch command received from {user.id}")
@@ -658,7 +662,10 @@ async def cancel_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if user_id in batch_files_in_progress:
         del batch_files_in_progress[user_id]
         logger.info(f"Cleared batch in progress for user {user.id}.")
-    context.user_data.pop('current_mode', None)
+    
+    # Ensure current_mode is reset regardless of how cancel was triggered
+    if 'current_mode' in context.user_data:
+        context.user_data.pop('current_mode')
 
     if update.callback_query:
         await update.callback_query.answer("बैच जनरेशन रद्द कर दिया गया।")
@@ -1089,6 +1096,9 @@ async def secure_link_start(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     # Clear any other pending modes
     context.user_data.pop('current_mode', None)
+    context.user_data.pop('secure_file_info', None) # Ensure previous secure file info is cleared
+    context.user_data.pop('secure_token_for_verification', None) # Ensure any pending verification is cleared
+
     if user.id in batch_files_in_progress:
         del batch_files_in_progress[user.id]
         logger.info(f"Cleared pending batch for user {user.id} when /securelink was used.")
@@ -1105,8 +1115,8 @@ async def handle_secure_link_file_received(update: Update, context: ContextTypes
     if context.user_data.get('current_mode') != SECURE_LINK_FILE_PENDING:
         logger.warning(f"File received from {user.id} not in secure link file pending mode. Ignoring.")
         await update.message.reply_text("आपने `/securelink` कमांड का उपयोग नहीं किया है। कृपया पहले उस कमांड का उपयोग करें।", parse_mode='MarkdownV2')
-        context.user_data.pop('current_mode', None)
-        return ConversationHandler.END
+        context.user_data.pop('current_mode', None) # Reset mode
+        return ConversationHandler.END # End conversation if not in correct state
 
     logger.info(f"Secure link file received from {user.id}")
 
@@ -1145,6 +1155,7 @@ async def handle_secure_link_file_received(update: Update, context: ContextTypes
     else:
         logger.info(f"Unsupported file type received from {user.id} for secure link.")
         await update.message.reply_text("कृपया एक डॉक्यूमेंट, वीडियो, फोटो, ऑडियो या APK फ़ाइल भेजें। अन्य फ़ाइल प्रकार समर्थित नहीं हैं।", parse_mode='MarkdownV2')
+        # Stay in the same state, allowing user to send correct file type
         return SECURE_LINK_FILE_PENDING
 
     user_chat_id = update.message.chat_id
@@ -1204,7 +1215,7 @@ async def handle_secure_link_file_received(update: Update, context: ContextTypes
         "file_type": file_type,
         "generated_by": user_id
     }
-    context.user_data['current_mode'] = SECURE_LINK_PIN_PENDING
+    context.user_data['current_mode'] = SECURE_LINK_PIN_PENDING # Move to the next state
     await update.message.reply_text("फ़ाइल प्राप्त हुई\! अब कृपया उस पिन को भेजें जिसे आप इस लिंक के लिए सेट करना चाहते हैं। यह एक संख्या होनी चाहिए।", parse_mode='MarkdownV2')
     return SECURE_LINK_PIN_PENDING
 
@@ -1215,17 +1226,19 @@ async def handle_secure_link_pin_received(update: Update, context: ContextTypes.
     if context.user_data.get('current_mode') != SECURE_LINK_PIN_PENDING:
         logger.warning(f"PIN received from {user.id} not in secure link pin pending mode. Ignoring.")
         await update.message.reply_text("यह पिन दर्ज करने का सही समय नहीं है। कृपया `/securelink` कमांड से शुरू करें।", parse_mode='MarkdownV2')
+        context.user_data.pop('current_mode', None) # Reset mode
         return ConversationHandler.END
 
     pin = update.message.text
     if not pin or not pin.isdigit():
         await update.message.reply_text("अमान्य पिन। कृपया एक संख्यात्मक पिन दर्ज करें।", parse_mode='MarkdownV2')
-        return SECURE_LINK_PIN_PENDING
+        return SECURE_LINK_PIN_PENDING # Stay in this state, ask for PIN again
 
     secure_file_info = context.user_data.get('secure_file_info')
     if not secure_file_info:
         logger.error(f"Secure file info missing for user {user.id} when PIN was received.")
         await update.message.reply_text("क्षमा करें, आपकी फ़ाइल जानकारी खो गई थी। कृपया `/securelink` से फिर से शुरू करें।", parse_mode='MarkdownV2')
+        context.user_data.pop('current_mode', None) # Reset mode
         return ConversationHandler.END
 
     # Generate unique token for secure link
@@ -1436,13 +1449,17 @@ def main() -> None:
         states={
             SINGLE_LINK_FILE_PENDING: [
                 MessageHandler(filters.ATTACHMENT, handle_file),
-                CommandHandler("cancel", lambda u, c: (c.user_data.pop('current_mode', None), u.message.reply_text("एकल फ़ाइल लिंक जनरेशन रद्द कर दिया गया।"))),
+                # If user sends text while expecting a file, tell them to send a file or cancel
                 MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text(
                     "फ़ाइल भेजें, कमांड नहीं। या एकल फ़ाइल लिंक जनरेशन रद्द करने के लिए `/cancel` का उपयोग करें।", parse_mode='MarkdownV2'
                 ))
             ],
         },
-        fallbacks=[CommandHandler("cancel", lambda u, c: (c.user_data.pop('current_mode', None), u.message.reply_text("एकल फ़ाइल लिंक जनरेशन रद्द कर दिया गया।")))],
+        fallbacks=[
+            CommandHandler("cancel", lambda u, c: (c.user_data.pop('current_mode', None), u.message.reply_text("एकल फ़ाइल लिंक जनरेशन रद्द कर दिया गया।")))
+        ],
+        per_user=True, # Ensure conversation state is per user
+        per_chat=False # Not per chat
     )
     application.add_handler(single_file_conv_handler)
 
@@ -1454,46 +1471,54 @@ def main() -> None:
                 MessageHandler(filters.ATTACHMENT, handle_batch_file_received),
                 CallbackQueryHandler(generate_batch_links, pattern="^generate_batch_links$"),
                 CallbackQueryHandler(cancel_batch, pattern="^cancel_batch_generation$"),
-                CommandHandler("cancel", cancel_batch)
+                # If user sends text while expecting a file, tell them to send a file or cancel
+                MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text(
+                    "फ़ाइल भेजें, कमांड नहीं। या बैच जनरेशन रद्द करने के लिए 'रद्द करें' बटन पर क्लिक करें या `/cancel` का उपयोग करें।", parse_mode='MarkdownV2'
+                ))
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel_batch), CallbackQueryHandler(cancel_batch, pattern="^cancel_batch_generation$")],
+        per_user=True,
+        per_chat=False
     )
     application.add_handler(batch_conv_handler)
 
     # Secure Link Conversation Handler
     secure_link_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("securelink", secure_link_start),
-                      MessageHandler(filters.Regex(r'^/start secure_download_.*'), start)], # Handle deep link for secure downloads
+        entry_points=[
+            CommandHandler("securelink", secure_link_start),
+            # This is important: the start command should handle the deep link for verification.
+            # Make sure start handler correctly returns the state.
+            MessageHandler(filters.Regex(r'^/start secure_download_.*'), start) 
+        ],
         states={
             SECURE_LINK_FILE_PENDING: [
                 MessageHandler(filters.ATTACHMENT, handle_secure_link_file_received),
-                CommandHandler("cancel", cancel_secure_link),
-                 # Allow text messages in this state (e.g., if user sends random text)
+                # Handle any other text input during file pending, but stay in the state
                 MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text(
-                    "फ़ाइल भेजें, कमांड नहीं। या सुरक्षित लिंक जनरेशन रद्द करने के लिए `/cancel` का उपयोग करें।", parse_mode='MarkdownV2'
+                    "कृपया फ़ाइल (डॉक्यूमेंट, वीडियो, फोटो, ऑडियो या APK) भेजें।", parse_mode='MarkdownV2'
                 ))
             ],
             SECURE_LINK_PIN_PENDING: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_secure_link_pin_received),
-                CommandHandler("cancel", cancel_secure_link)
+                # Handle any non-text input during PIN pending, but stay in the state
+                MessageHandler(filters.ATTACHMENT | filters.COMMAND, lambda u, c: u.message.reply_text(
+                    "कृपया केवल पिन दर्ज करें। यह एक संख्यात्मक मान होना चाहिए।", parse_mode='MarkdownV2'
+                ))
             ],
             SECURE_LINK_PIN_VERIFICATION: [ # State for verifying PIN from deep link redirection
                 MessageHandler(filters.TEXT & ~filters.COMMAND, verify_secure_link_pin),
-                CommandHandler("cancel", cancel_secure_link) # Allow cancellation during pin entry
+                # Handle any non-text input during PIN verification, but stay in the state
+                MessageHandler(filters.ATTACHMENT | filters.COMMAND, lambda u, c: u.message.reply_text(
+                    "कृपया केवल पिन दर्ज करें।", parse_mode='MarkdownV2'
+                ))
             ]
         },
         fallbacks=[CommandHandler("cancel", cancel_secure_link)],
+        per_user=True,
+        per_chat=False
     )
     application.add_handler(secure_link_conv_handler)
-
-
-    # This MessageHandler for TEXT messages should be last to avoid
-    # interfering with conversation handlers. It catches any text not caught by other handlers.
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text(
-        "मुझे समझ नहीं आया। फ़ाइल लिंक जनरेट करने के लिए, कृपया `/link`, `/batch` या `/securelink` कमांड का उपयोग करें।", parse_mode='MarkdownV2'
-    )))
-
 
     # New command handlers
     application.add_handler(CommandHandler("stats", stats_command))
@@ -1509,9 +1534,17 @@ def main() -> None:
     # Add InlineQueryHandler
     application.add_handler(InlineQueryHandler(inline_query_handler))
 
+    # This MessageHandler for TEXT messages should be last to avoid
+    # interfering with conversation handlers. It catches any text not caught by other handlers.
+    # It must be added AFTER all ConversationHandlers.
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text(
+        "मुझे समझ नहीं आया। फ़ाइल लिंक जनरेट करने के लिए, कृपया `/link`, `/batch` या `/securelink` कमांड का उपयोग करें।", parse_mode='MarkdownV2'
+    )))
+
 
     logger.info("बॉट चल रहा है...")
     application.run_polling()
 
 if __name__ == "__main__":
     main()
+
