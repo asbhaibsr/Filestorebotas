@@ -126,13 +126,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                         telegram_file_id = file_data["telegram_file_id"]
                         original_filename = file_data["original_filename"]
                         try:
-                            # Inline कीबोर्ड में 'Join Updates Channel' और 'How to Download File' बटन
-                            keyboard = [
-                                [InlineKeyboardButton("Join Updates Channel", url=UPDATES_CHANNEL_LINK)],
-                                [InlineKeyboardButton("How to Download File", url="https://t.me/asbhai_bsr")] # नया बटन
-                            ]
-                            reply_markup = InlineKeyboardMarkup(keyboard)
-
                             # Escape original_filename for MarkdownV2 in caption
                             escaped_filename = escape_markdown_v2(original_filename)
 
@@ -150,7 +143,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                                     caption=caption_text,
                                     filename=original_filename,
                                     parse_mode='MarkdownV2',
-                                    reply_markup=reply_markup # No forward button
                                 )
                             elif file_data.get("file_type") == "photo":
                                 sent_msg = await update.message.reply_photo(
@@ -158,7 +150,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                                     caption=caption_text_template,
                                     filename=original_filename,
                                     parse_mode='MarkdownV2',
-                                    reply_markup=reply_markup # No forward button
                                 )
                             else: # assume it's a document/apk
                                 sent_msg = await update.message.reply_document(
@@ -166,7 +157,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                                     caption=caption_text_template,
                                     filename=original_filename,
                                     parse_mode='MarkdownV2',
-                                    reply_markup=reply_markup # No forward button
                                 )
                             sent_message_ids.append(sent_msg.message_id)
                             logger.info(f"Batch file {original_filename} sent to user {user.id}")
@@ -179,14 +169,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
                 await update.message.reply_text("सभी बैच फ़ाइलें भेजी गईं!")
 
-                # 2 मिनट बाद फ़ाइलें ऑटो-डिलीट करें
-                await asyncio.sleep(120) # 120 seconds = 2 minutes
-                for msg_id in sent_message_ids:
-                    try:
-                        await context.bot.delete_message(chat_id=update.message.chat_id, message_id=msg_id)
-                        logger.info(f"Auto-deleted batch file message {msg_id} for user {user.id}")
-                    except Exception as e:
-                        logger.warning(f"Could not auto-delete batch file message {msg_id} for user {user.id}: {e}")
+                # 2 मिनट बाद फ़ाइलें ऑटो-डिलीट करें (non-blocking)
+                async def delete_batch_messages_after_delay():
+                    await asyncio.sleep(120) # 120 seconds = 2 minutes
+                    for msg_id in sent_message_ids:
+                        try:
+                            await context.bot.delete_message(chat_id=update.message.chat_id, message_id=msg_id)
+                            logger.info(f"Auto-deleted batch file message {msg_id} for user {user.id}")
+                        except Exception as e:
+                            logger.warning(f"Could not auto-delete batch file message {msg_id} for user {user.id}: {e}")
+                
+                asyncio.create_task(delete_batch_messages_after_delay()) # Run deletion in background
 
                 # बैच को एक बार भेजने के बाद हटा दें ताकि इसे दोबारा एक्सेस न किया जा सके
                 # Note: This will make the batch link unusable after one successful download.
@@ -209,14 +202,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 telegram_file_id = file_data["telegram_file_id"]
                 original_filename = file_data["original_filename"]
                 try:
-                    # Inline कीबोर्ड में 'Join Updates Channel' और 'How to Download File' बटन
-                    keyboard = [
-                        [InlineKeyboardButton("Join Updates Channel", url=UPDATES_CHANNEL_LINK)],
-                        [InlineKeyboardButton("How to Download File", url="https://t.me/asbhai_bsr")] # नया बटन
-                    ]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-
-                    # Escape original_filename for MarkdownV2 in caption
                     escaped_filename = escape_markdown_v2(original_filename)
 
                     caption_text_template = (
@@ -233,7 +218,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                             caption=caption_text,
                             filename=original_filename,
                             parse_mode='MarkdownV2',
-                            reply_markup=reply_markup # No forward button
                         )
                         logger.info(f"Video {original_filename} sent to user {user.id}")
                     elif file_data.get("file_type") == "photo":
@@ -242,7 +226,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                             caption=caption_text_template,
                             filename=original_filename,
                             parse_mode='MarkdownV2',
-                            reply_markup=reply_markup # No forward button
                         )
                         logger.info(f"Photo {original_filename} sent to user {user.id}")
                     else: # assume it's a document/apk
@@ -251,17 +234,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                             caption=caption_text_template,
                             filename=original_filename,
                             parse_mode='MarkdownV2',
-                            reply_markup=reply_markup # No forward button
                         )
                         logger.info(f"Document {original_filename} sent to user {user.id}")
 
-                    # 2 मिनट बाद फ़ाइल ऑटो-डिलीट करें
-                    await asyncio.sleep(120) # 120 seconds = 2 minutes
-                    try:
-                        await context.bot.delete_message(chat_id=update.message.chat_id, message_id=sent_msg.message_id)
-                        logger.info(f"Auto-deleted single file message {sent_msg.message_id} for user {user.id}")
-                    except Exception as e:
-                        logger.warning(f"Could not auto-delete single file message {sent_msg.message_id} for user {user.id}: {e}")
+                    # 2 मिनट बाद फ़ाइल ऑटो-डिलीट करें (non-blocking)
+                    async def delete_single_message_after_delay():
+                        await asyncio.sleep(120) # 120 seconds = 2 minutes
+                        try:
+                            await context.bot.delete_message(chat_id=update.message.chat_id, message_id=sent_msg.message_id)
+                            logger.info(f"Auto-deleted single file message {sent_msg.message_id} for user {user.id}")
+                        except Exception as e:
+                            logger.warning(f"Could not auto-delete single file message {sent_msg.message_id} for user {user.id}: {e}")
+                    
+                    asyncio.create_task(delete_single_message_after_delay()) # Run deletion in background
 
                 except Exception as e:
                     logger.error(f"Error sending file {original_filename} to user {user.id}: {e}")
@@ -580,7 +565,7 @@ async def generate_batch_links(update: Update, context: ContextTypes.DEFAULT_TYP
     keyboard = [
         [InlineKeyboardButton("बैच फ़ाइलें डाउनलोड करें", url=apps_script_redirect_url)],
         [InlineKeyboardButton("कॉपी लिंक", callback_data=f"copy_batch_link_{batch_id}")], # नया कॉपी लिंक बटन
-        [InlineKeyboardButton("How to Download File", url="https://t.me/asbhai_bsr")] # नया बटन
+        [InlineKeyboardButton("How to Download File", url=UPDATES_CHANNEL_LINK)] # नया बटन
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -720,7 +705,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     keyboard = [
         [InlineKeyboardButton("फ़ाइल डाउनलोड करें", url=apps_script_redirect_url)],
         [InlineKeyboardButton("कॉपी लिंक", callback_data=f"copy_link_{permanent_token}")], # नया कॉपी लिंक बटन
-        [InlineKeyboardButton("How to Download File", url="https://t.me/asbhai_bsr")] # नया बटन
+        [InlineKeyboardButton("How to Download File", url=UPDATES_CHANNEL_LINK)] # नया बटन
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -1120,7 +1105,7 @@ async def handle_secure_link_pin_received(update: Update, context: ContextTypes.
     keyboard = [
         [InlineKeyboardButton("सुरक्षित फ़ाइल डाउनलोड करें", url=apps_script_redirect_url)],
         [InlineKeyboardButton("कॉपी लिंक", callback_data=f"copy_secure_link_{secure_token}")],
-        [InlineKeyboardButton("How to Download File", url="https://t.me/asbhai_bsr")] # नया बटन
+        [InlineKeyboardButton("How to Download File", url=UPDATES_CHANNEL_LINK)] # नया बटन
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -1173,13 +1158,6 @@ async def verify_secure_link_pin(update: Update, context: ContextTypes.DEFAULT_T
         file_type = secure_link_data["file_type"]
 
         try:
-            # Inline कीबोर्ड में 'Join Updates Channel' और 'How to Download File' बटन
-            keyboard = [
-                [InlineKeyboardButton("Join Updates Channel", url=UPDATES_CHANNEL_LINK)],
-                [InlineKeyboardButton("How to Download File", url="https://t.me/asbhai_bsr")] # नया बटन
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
             escaped_filename = escape_markdown_v2(original_filename)
 
             caption_text_template = (
@@ -1196,7 +1174,6 @@ async def verify_secure_link_pin(update: Update, context: ContextTypes.DEFAULT_T
                     caption=caption_text,
                     filename=original_filename,
                     parse_mode='MarkdownV2',
-                    reply_markup=reply_markup
                 )
             elif file_type == "photo":
                 sent_msg = await update.message.reply_photo(
@@ -1204,7 +1181,6 @@ async def verify_secure_link_pin(update: Update, context: ContextTypes.DEFAULT_T
                     caption=caption_text_template,
                     filename=original_filename,
                     parse_mode='MarkdownV2',
-                    reply_markup=reply_markup
                 )
             else:
                 sent_msg = await update.message.reply_document(
@@ -1212,17 +1188,19 @@ async def verify_secure_link_pin(update: Update, context: ContextTypes.DEFAULT_T
                     caption=caption_text_template,
                     filename=original_filename,
                     parse_mode='MarkdownV2',
-                    reply_markup=reply_markup
                 )
             logger.info(f"Secure file {original_filename} sent to user {user.id} after PIN verification.")
 
-            # 2 मिनट बाद फ़ाइल ऑटो-डिलीट करें
-            await asyncio.sleep(120)
-            try:
-                await context.bot.delete_message(chat_id=update.message.chat_id, message_id=sent_msg.message_id)
-                logger.info(f"Auto-deleted secure file message {sent_msg.message_id} for user {user.id}.")
-            except Exception as e:
-                logger.warning(f"Could not auto-delete secure file message {sent_msg.message_id} for user {user.id}: {e}")
+            # 2 मिनट बाद फ़ाइल ऑटो-डिलीट करें (non-blocking)
+            async def delete_secure_message_after_delay():
+                await asyncio.sleep(120)
+                try:
+                    await context.bot.delete_message(chat_id=update.message.chat_id, message_id=sent_msg.message_id)
+                    logger.info(f"Auto-deleted secure file message {sent_msg.message_id} for user {user.id}.")
+                except Exception as e:
+                    logger.warning(f"Could not auto-delete secure file message {sent_msg.message_id} for user {user.id}: {e}")
+            
+            asyncio.create_task(delete_secure_message_after_delay()) # Run deletion in background
 
         except Exception as e:
             logger.error(f"Error sending secure file {original_filename} to user {user.id}: {e}")
@@ -1357,3 +1335,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
