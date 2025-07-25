@@ -34,7 +34,7 @@ UPDATES_CHANNEL_LINK = "https://t.me/asbhai_bsr" # आपका अपडेट 
 GOOGLE_APPS_SCRIPT_API_URL = os.getenv("GOOGLE_APPS_SCRIPT_API_URL", "https://script.google.com/macros/s/AKfycbwDqKLE1bZjwBcNT8wDA2SlKs821Gq7bhea8JOzgiFPyGuATAKXWY_LtvOwlFwL9n6w/exec") # Example URL, replace with your actual URL
 
 # Start Photo URL for the bot (leave empty if not needed, or add your photo URL)
-START_PHOTO_URL = os.getenv("START_PHOTO_URL", "https://envs.sh/0Eh.jpg") # <-- यहां अपनी बॉट फोटो का URL डालें
+START_PHOTO_URL = os.getenv("START_PHOTO_URL", "") # <-- यहां अपनी बॉट फोटो का URL डालें
 
 # MongoDB Configuration
 MONGO_URI = os.getenv("MONGO_URI")
@@ -44,6 +44,7 @@ files_collection = db.files # फ़ाइल मेटाडेटा के �
 batches_collection = db.batches # बैच जानकारी के लिए
 users_collection = db.users # यूजर जानकारी के लिए (stats और broadcast के लिए)
 user_links_collection = db.user_links # उपयोगकर्ता द्वारा जनरेट की गई लिंक्स का ट्रैक रखने के लिए
+secure_links_collection = db.secure_links # Secure links for PIN protection
 
 batch_files_in_progress = {}
 
@@ -52,6 +53,12 @@ ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", "YOUR_ADMIN_TELEGRAM_ID_HERE")) #
 
 # --- Conversation States for Batch Command ---
 SENDING_BATCH_FILES = 1
+
+# --- Conversation States for Secure Link Command ---
+SECURE_LINK_FILE_PENDING = 2
+SECURE_LINK_PIN_PENDING = 3
+SECURE_LINK_PIN_VERIFICATION = 4
+
 
 # --- Flask App for Health Check ---
 flask_app = Flask(__name__)
@@ -91,7 +98,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if args:
         param = args[0]
-        if param.startswith("download_batch_"):
+        # Handle secure link deep link
+        if param.startswith("secure_download_"):
+            secure_token = param[len("secure_download_"):]
+            logger.info(f"Secure download deep link received: {secure_token}")
+            await update.message.reply_text("कृपया इस सुरक्षित फ़ाइल को डाउनलोड करने के लिए पिन दर्ज करें।", parse_mode='MarkdownV2')
+            context.user_data['secure_token_for_verification'] = secure_token
+            return SECURE_LINK_PIN_VERIFICATION # Enter state for PIN verification
+        elif param.startswith("download_batch_"):
             # यह तब होता है जब यूजर ब्लॉगर पेज पर बैच सत्यापन के बाद वापस बॉट पर रीडायरेक्ट होता है।
             batch_id = param[len("download_batch_"):]
             logger.info(f"Batch download deep link received after verification: {batch_id}")
@@ -111,9 +125,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                         telegram_file_id = file_data["telegram_file_id"]
                         original_filename = file_data["original_filename"]
                         try:
-                            # Inline कीबोर्ड में दो बटन
+                            # Inline कीबोर्ड में केवल 'Join Updates Channel' बटन
                             keyboard = [
-                                [InlineKeyboardButton("इस फ़ाइल को कहीं और फॉरवर्ड करें", switch_inline_query_current_chat=telegram_file_id)],
                                 [InlineKeyboardButton("Join Updates Channel", url=UPDATES_CHANNEL_LINK)] # नया बटन
                             ]
                             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -135,7 +148,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                                     caption=caption_text,
                                     filename=original_filename,
                                     parse_mode='MarkdownV2',
-                                    reply_markup=reply_markup
+                                    reply_markup=reply_markup # No forward button
                                 )
                             elif file_data.get("file_type") == "photo":
                                 sent_msg = await update.message.reply_photo(
@@ -143,7 +156,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                                     caption=caption_text_template,
                                     filename=original_filename,
                                     parse_mode='MarkdownV2',
-                                    reply_markup=reply_markup
+                                    reply_markup=reply_markup # No forward button
                                 )
                             else: # assume it's a document/apk
                                 sent_msg = await update.message.reply_document(
@@ -151,7 +164,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                                     caption=caption_text_template,
                                     filename=original_filename,
                                     parse_mode='MarkdownV2',
-                                    reply_markup=reply_markup
+                                    reply_markup=reply_markup # No forward button
                                 )
                             sent_message_ids.append(sent_msg.message_id)
                             logger.info(f"Batch file {original_filename} sent to user {user.id}")
@@ -178,11 +191,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 # If you want it to be permanently downloadable, remove this line.
                 batches_collection.delete_one({"_id": batch_id})
                 logger.info(f"Batch {batch_id} deleted from MongoDB after sending.")
-                return
+                return ConversationHandler.END # End conversation state if any
             else:
                 logger.warning(f"Invalid or expired batch token {batch_id} requested by user {user.id} after verification.")
                 await update.message.reply_text("अमान्य या समाप्त बैच डाउनलोड अनुरोध। कृपया पुनः प्रयास करें या एक नई फ़ाइल अपलोड करें।")
-                return
+                return ConversationHandler.END # End conversation state if any
         elif param.startswith("download_"):
             # यह तब होता है जब यूजर ब्लॉगर पेज पर सिंगल फ़ाइल सत्यापन के बाद वापस बॉट पर रीडायरेक्ट होता है।
             original_permanent_token = param[len("download_"):]
@@ -194,9 +207,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 telegram_file_id = file_data["telegram_file_id"]
                 original_filename = file_data["original_filename"]
                 try:
-                    # Inline कीबोर्ड में दो बटन
+                    # Inline कीबोर्ड में केवल 'Join Updates Channel' बटन
                     keyboard = [
-                        [InlineKeyboardButton("इस फ़ाइल को कहीं और फॉरवर्ड करें", switch_inline_query_current_chat=telegram_file_id)],
                         [InlineKeyboardButton("Join Updates Channel", url=UPDATES_CHANNEL_LINK)] # नया बटन
                     ]
                     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -218,7 +230,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                             caption=caption_text,
                             filename=original_filename,
                             parse_mode='MarkdownV2',
-                            reply_markup=reply_markup
+                            reply_markup=reply_markup # No forward button
                         )
                         logger.info(f"Video {original_filename} sent to user {user.id}")
                     elif file_data.get("file_type") == "photo":
@@ -227,7 +239,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                             caption=caption_text_template,
                             filename=original_filename,
                             parse_mode='MarkdownV2',
-                            reply_markup=reply_markup
+                            reply_markup=reply_markup # No forward button
                         )
                         logger.info(f"Photo {original_filename} sent to user {user.id}")
                     else: # assume it's a document/apk
@@ -236,7 +248,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                             caption=caption_text_template,
                             filename=original_filename,
                             parse_mode='MarkdownV2',
-                            reply_markup=reply_markup
+                            reply_markup=reply_markup # No forward button
                         )
                         logger.info(f"Document {original_filename} sent to user {user.id}")
 
@@ -252,11 +264,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     logger.error(f"Error sending file {original_filename} to user {user.id}: {e}")
                     # Escape the error message itself
                     await update.message.reply_text(f"क्षमा करें, फ़ाइल नहीं भेजी जा सकी। एक त्रुटि हुई: `{escape_markdown_v2(str(e))}`", parse_mode='MarkdownV2')
-                return
+                return ConversationHandler.END # End conversation state if any
             else:
                 logger.warning(f"Invalid permanent token {original_permanent_token} requested by user {user.id} after verification.")
                 await update.message.reply_text("अमान्य या समाप्त डाउनलोड अनुरोध। कृपया पुनः प्रयास करें या एक नई फ़ाइल अपलोड करें।")
-                return
+                return ConversationHandler.END # End conversation state if any
         else:
             # यह तब होता है जब यूजर स्थायी Telegram डीप लिंक पर क्लिक करता है (पहली बार)
             # यह अब सीधे Apps Script पर रीडायरेक्ट करेगा
@@ -332,15 +344,21 @@ async def send_welcome_message(update: Update, context: ContextTypes.DEFAULT_TYP
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info("Help command received.")
     help_text = (
-        "यहाँ वे कमांड दिए गए हैं जिनका आप उपयोग कर सकते हैं:\n\n"
-        "➡️ /start \\- स्वागत संदेश प्राप्त करें\\.\n" # Escaped .
-        "➡️ /link \\- एक फ़ाइल के लिए साझा करने योग्य लिंक प्राप्त करें\\.\n" # Escaped .
-        "➡️ /batch \\- एक साथ कई फ़ाइलों के लिए लिंक जनरेट करें\\.\n" # Escaped .
-        "➡️ /mylink \\- आपके द्वारा जनरेट की गई लिंक्स की संख्या देखें\\.\n\n" # Escaped .
-        "कमांड `/link` या `/batch` का उपयोग करने के बाद मुझे कोई भी डॉक्यूमेंट या वीडियो भेजें\\." # Escaped .
+        "नमस्ते\! मैं एक फ़ाइल साझा करने वाला बॉट हूँ जो आपको टेलीग्राम पर आसानी से फ़ाइलें साझा करने में मदद करता है।\n\n"
+        "**मैं कैसे काम करता हूँ:**\n"
+        "आप मुझे कोई भी फ़ाइल (डॉक्यूमेंट, वीडियो, फोटो, APK) भेज सकते हैं, और मैं आपको उस फ़ाइल के लिए एक स्थायी डाउनलोड लिंक दूँगा। यह लिंक ब्लॉगर पर सत्यापन के बाद फ़ाइल को सीधे आपके चैट में भेजेगा।\n\n"
+        "**उपलब्ध कमांड्स:**\n"
+        "➡️ /start \\- स्वागत संदेश प्राप्त करें और बॉट को रीसेट करें।\n"
+        "➡️ /link \\- एक एकल फ़ाइल के लिए साझा करने योग्य लिंक जनरेट करें।\n"
+        "➡️ /batch \\- एक साथ कई फ़ाइलों के लिए एक साझा करने योग्य लिंक जनरेट करें।\n"
+        "➡️ /securelink \\- एक पिन-सुरक्षित लिंक जनरेट करें। इस लिंक को एक्सेस करने के लिए एक पिन की आवश्यकता होगी।\n"
+        "➡️ /mylink \\- आपके द्वारा जनरेट की गई कुल लिंक्स की संख्या देखें।\n\n"
+        "**मैं फ़ाइलों को कहाँ स्टोर करता हूँ\\?**\n"
+        "मैं आपकी फ़ाइलों को सुरक्षित रूप से एक निजी टेलीग्राम चैनल में स्टोर करता हूँ, और लिंक के माध्यम से पहुँच की अनुमति देता हूँ। फ़ाइलें 2 मिनट के बाद ऑटो-डिलीट हो जाएंगी, इसलिए उन्हें कहीं और फॉरवर्ड करना सुनिश्चित करें।\n\n"
+        "यदि आपके कोई और प्रश्न हैं, तो कृपया Updates Channel पर संपर्क करें।"
     )
-    # Escape the entire help_text before sending
-    escaped_help_text = help_text # No need to re-escape if already done manually where needed. Let's make sure it's correct.
+    # Using escape_markdown_v2 on the whole string is generally safer if it contains varying user-generated content or complex formatting.
+    escaped_help_text = escape_markdown_v2(help_text)
 
     if update.callback_query:
         await update.callback_query.answer()
@@ -350,12 +368,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await context.bot.edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
-            text=help_text, # Use manually escaped text
+            text=escaped_help_text, # Use escaped text
+            parse_mode='MarkdownV2',
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("पीछे", callback_data="back_to_welcome")]])
         )
         logger.info("Help message sent via callback edit.")
     else:
-        await update.message.reply_text(help_text, parse_mode='MarkdownV2') # Use manually escaped text
+        await update.message.reply_text(escaped_help_text, parse_mode='MarkdownV2') # Use escaped text
         logger.info("Help message sent via direct command.")
 
 async def back_to_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -372,6 +391,11 @@ async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         del batch_files_in_progress[user_id]
         logger.info(f"Cleared pending batch for user {user.id} when /link was used.")
 
+    # Reset secure link conversation if active
+    if context.user_data.get('current_mode') in [SECURE_LINK_FILE_PENDING, SECURE_LINK_PIN_PENDING]:
+        context.user_data.pop('current_mode', None)
+        context.user_data.pop('secure_file_info', None)
+
     # Set current_mode to 'single_file_pending' to allow file handling only after /link
     context.user_data['current_mode'] = 'single_file_pending'
     await update.message.reply_text("कृपया मुझे वह फ़ाइल (डॉक्यूमेंट या वीडियो) भेजें जिसकी आप लिंक जनरेट करना चाहते हैं।") # Simple text, no special chars that need escaping
@@ -387,6 +411,12 @@ async def batch_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Con
         batch_files_in_progress[user_id] = []
     else:
         batch_files_in_progress[user_id] = []
+
+    # Reset secure link conversation if active
+    if context.user_data.get('current_mode') in [SECURE_LINK_FILE_PENDING, SECURE_LINK_PIN_PENDING]:
+        context.user_data.pop('current_mode', None)
+        context.user_data.pop('secure_file_info', None)
+
 
     # Set current_mode to 'batch_file_pending' to allow file handling only after /batch
     context.user_data['current_mode'] = 'batch_file_pending'
@@ -579,13 +609,16 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     user = update.effective_user
     await update_user_info(user.id, user.username, user.first_name)
 
-    # Only process if current_mode is 'single_file_pending' or 'batch_file_pending'
+    # Only process if current_mode is 'single_file_pending' or 'batch_file_pending' or SECURE_LINK_FILE_PENDING
     if context.user_data.get('current_mode') == 'batch_file_pending':
         logger.info(f"File received in batch mode from {user.id}. Passing to batch handler.")
         return await handle_batch_file_received(update, context)
+    elif context.user_data.get('current_mode') == SECURE_LINK_FILE_PENDING:
+        logger.info(f"File received in secure link mode from {user.id}. Passing to secure link file handler.")
+        return await handle_secure_link_file_received(update, context)
     elif context.user_data.get('current_mode') != 'single_file_pending':
-        logger.info(f"File received from {user.id} but not in /link or /batch mode. Ignoring.")
-        await update.message.reply_text("फ़ाइल लिंक जनरेट करने के लिए, कृपया `/link` या `/batch` कमांड का उपयोग करें।", parse_mode='MarkdownV2')
+        logger.info(f"File received from {user.id} but not in /link or /batch or /securelink mode. Ignoring.")
+        await update.message.reply_text("फ़ाइल लिंक जनरेट करने के लिए, कृपया `/link`, `/batch` या `/securelink` कमांड का उपयोग करें।", parse_mode='MarkdownV2')
         context.user_data.pop('current_mode', None) # Reset mode
         return
 
@@ -709,6 +742,14 @@ async def copy_link_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"`{escape_markdown_v2(apps_script_url)}`\n\n"
             f"इसे कॉपी करने के लिए टैप करके रखें\\." # Escaped .
         )
+    elif data.startswith("copy_secure_link_"): # Handle secure link copy
+        secure_token = data[len("copy_secure_link_"):]
+        apps_script_url = f"{GOOGLE_APPS_SCRIPT_API_URL}?secure_token={secure_token}"
+        message_text = (
+            f"यह आपकी सुरक्षित फ़ाइल के लिए स्थायी लिंक है:\n\n"
+            f"`{escape_markdown_v2(apps_script_url)}`\n\n"
+            f"इसे कॉपी करने के लिए टैप करके रखें\\." # Escaped .
+        )
     else:
         message_text = "कॉपी करने के लिए अमान्य लिंक प्रकार।" # Simple text, no special chars that need escaping
 
@@ -724,11 +765,13 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     total_files = files_collection.count_documents({})
     total_users = users_collection.count_documents({})
     total_batches = batches_collection.count_documents({})
+    total_secure_links = secure_links_collection.count_documents({}) # Count secure links
 
     stats_text = (
         f"📊 \\*\\*बॉट आंकड़े\\*\\*\n"
         f"कुल फ़ाइलें संग्रहीत: `{total_files}`\n"
         f"कुल बैच: `{total_batches}`\n"
+        f"कुल सुरक्षित लिंक्स: `{total_secure_links}`\n" # Display secure link count
         f"कुल उपयोगकर्ता: `{total_users}`"
     )
     # Using escape_markdown_v2 on the whole string is generally safer if it contains varying user-generated content or complex formatting.
@@ -787,34 +830,55 @@ async def dellink_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     token_to_delete = context.args[0]
+    deleted_count = 0
 
-    # files_collection से हटाएँ
+    # Attempt to delete from files_collection
     file_info = files_collection.find_one({"token": token_to_delete})
     delete_result_file = files_collection.delete_one({"token": token_to_delete})
-
-    # batches_collection से हटाएँ यदि यह किसी बैच का हिस्सा है
-    # हम बैच को अपडेट करेंगे, पूरे बैच को नहीं हटाएंगे जब तक कि यह आखिरी फ़ाइल न हो
-    batches_collection.update_many(
-        {"permanent_tokens": token_to_delete},
-        {"$pull": {"permanent_tokens": token_to_delete}}
-    )
-    # यदि कोई बैच खाली हो जाता है, तो उसे हटा दें
-    batches_collection.delete_many({"permanent_tokens": {"$size": 0}})
-
     if delete_result_file.deleted_count > 0:
-        # उपयोगकर्ता के लिंक काउंट को भी अपडेट करें
+        deleted_count += delete_result_file.deleted_count
+        # Update user's link count if the file was deleted
         if file_info and "generated_by" in file_info:
             user_links_collection.update_one(
                 {"_id": file_info["generated_by"]},
                 {"$inc": {"link_count": -1}}
             )
-        # Escape the token as it's within a code block
-        await update.message.reply_text(f"टोकन `{escape_markdown_v2(token_to_delete)}` और संबंधित फ़ाइल जानकारी सफलतापूर्वक हटा दी गई।", parse_mode='MarkdownV2')
+        logger.info(f"File with token {token_to_delete} deleted from 'files_collection'.")
+
+    # Attempt to delete from secure_links_collection
+    secure_link_info = secure_links_collection.find_one({"token": token_to_delete})
+    delete_result_secure_link = secure_links_collection.delete_one({"token": token_to_delete})
+    if delete_result_secure_link.deleted_count > 0:
+        deleted_count += delete_result_secure_link.deleted_count
+        # Update user's link count if the secure link was deleted
+        if secure_link_info and "generated_by" in secure_link_info:
+            user_links_collection.update_one(
+                {"_id": secure_link_info["generated_by"]},
+                {"$inc": {"link_count": -1}}
+            )
+        logger.info(f"Secure link with token {token_to_delete} deleted from 'secure_links_collection'.")
+
+    # Update batches_collection if the token was part of a batch
+    batches_collection.update_many(
+        {"permanent_tokens": token_to_delete},
+        {"$pull": {"permanent_tokens": token_to_delete}}
+    )
+    # Delete any empty batches
+    batches_collection.delete_many({"permanent_tokens": {"$size": 0}})
+
+    if deleted_count > 0:
+        await update.message.reply_text(
+            f"टोकन `{escape_markdown_v2(token_to_delete)}` और संबंधित फ़ाइल जानकारी सफलतापूर्वक हटा दी गई\\.",
+            parse_mode='MarkdownV2'
+        )
         logger.info(f"Token {token_to_delete} deleted by admin {user.id}.")
     else:
-        # Escape the token as it's within a code block
-        await update.message.reply_text(f"टोकन `{escape_markdown_v2(token_to_delete)}` नहीं मिला।", parse_mode='MarkdownV2')
+        await update.message.reply_text(
+            f"टोकन `{escape_markdown_v2(token_to_delete)}` नहीं मिला\\.",
+            parse_mode='MarkdownV2'
+        )
         logger.warning(f"Dellink command: Token {token_to_delete} not found for deletion by admin {user.id}.")
+
 
 async def my_link_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
@@ -836,6 +900,8 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if query:
         # Try to find the file by its Telegram file_id (which is the query)
         file_data = files_collection.find_one({"telegram_file_id": query})
+        # Also check in secure links collection
+        secure_file_data = secure_links_collection.find_one({"telegram_file_id": query})
 
         if file_data:
             original_filename = file_data["original_filename"]
@@ -872,14 +938,307 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                         parse_mode='MarkdownV2'
                     )
                 )
+        elif secure_file_data: # If found in secure_links_collection
+            original_filename = secure_file_data["original_filename"]
+            telegram_file_id = secure_file_data["telegram_file_id"]
+            file_type = secure_file_data["file_type"]
+
+            # Note: For secure links, we don't directly offer the file without PIN.
+            # The inline query should likely just show information, or not show secure links at all.
+            # For now, let's include it but without implying direct download.
+            results.append(
+                InlineQueryResultCachedDocument( # Use document as a generic type for secure link preview
+                    id=str(uuid.uuid4()),
+                    document_file_id=telegram_file_id,
+                    title=f"सुरक्षित फ़ाइल: {original_filename} (पिन आवश्यक)",
+                    caption=f"यह एक सुरक्षित फ़ाइल है: `{escape_markdown_v2(original_filename)}`\\. इसे डाउनलोड करने के लिए एक पिन की आवश्यकता होगी\\.",
+                    parse_mode='MarkdownV2'
+                )
+            )
+
         else:
             logger.info(f"No file found for inline query: {query}")
     else:
-        # If query is empty, maybe show some recent files or a help message
-        # For now, let's keep it simple and only respond to specific file_ids.
         pass # No results for empty query
 
     await update.inline_query.answer(results, cache_time=10) # Cache for 10 seconds
+
+# --- Secure Link Command Handlers ---
+
+async def secure_link_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    await update_user_info(user.id, user.username, user.first_name)
+    logger.info(f"/securelink command received from {user.id}")
+
+    # Clear any other pending modes
+    context.user_data.pop('current_mode', None)
+    if user.id in batch_files_in_progress:
+        del batch_files_in_progress[user.id]
+        logger.info(f"Cleared pending batch for user {user.id} when /securelink was used.")
+
+    context.user_data['current_mode'] = SECURE_LINK_FILE_PENDING
+    await update.message.reply_text("ठीक है, कृपया मुझे वह फ़ाइल (डॉक्यूमेंट, वीडियो, फोटो या APK) भेजें जिसे आप पिन से सुरक्षित करना चाहते हैं।", parse_mode='MarkdownV2')
+    return SECURE_LINK_FILE_PENDING
+
+async def handle_secure_link_file_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    await update_user_info(user.id, user.username, user.first_name)
+    user_id = user.id
+
+    if context.user_data.get('current_mode') != SECURE_LINK_FILE_PENDING:
+        logger.warning(f"File received from {user.id} not in secure link file pending mode. Ignoring.")
+        await update.message.reply_text("आपने `/securelink` कमांड का उपयोग नहीं किया है। कृपया पहले उस कमांड का उपयोग करें।", parse_mode='MarkdownV2')
+        context.user_data.pop('current_mode', None)
+        return ConversationHandler.END
+
+    logger.info(f"Secure link file received from {user.id}")
+
+    file = None
+    file_type = ""
+    if update.message.document:
+        file = update.message.document
+        file_type = "document"
+        if file.file_name and file.file_name.endswith('.apk'):
+            file_type = "apk"
+    elif update.message.video:
+        file = update.message.video
+        file_type = "video"
+    elif update.message.photo:
+        file = update.message.photo[-1]
+        file_type = "photo"
+    else:
+        logger.info(f"Unsupported file type received from {user.id} for secure link.")
+        await update.message.reply_text("कृपया एक डॉक्यूमेंट, वीडियो, फोटो या APK फ़ाइल भेजें। अन्य फ़ाइल प्रकार समर्थित नहीं हैं।", parse_mode='MarkdownV2')
+        return SECURE_LINK_FILE_PENDING
+
+    original_filename = file.file_name if file.file_name else f"unnamed_{file_type}"
+    user_chat_id = update.message.chat_id
+
+    try:
+        if file_type == "photo":
+            sent_message = await context.bot.send_photo(
+                chat_id=PUBLIC_CHANNEL_ID,
+                photo=file.file_id,
+                caption=f"सुरक्षित फोटो \\({user_chat_id}\\)"
+            )
+            permanent_telegram_file_id = sent_message.photo[-1].file_id
+        else:
+            sent_message = await context.bot.forward_message(
+                chat_id=PUBLIC_CHANNEL_ID,
+                from_chat_id=user_chat_id,
+                message_id=update.message.message_id
+            )
+            permanent_telegram_file_id = None
+            if sent_message.document:
+                permanent_telegram_file_id = sent_message.document.file_id
+            elif sent_message.video:
+                permanent_telegram_file_id = sent_message.video.file_id
+
+        if not permanent_telegram_file_id:
+            logger.error(f"Failed to get file ID from forwarded message for secure link file {original_filename}")
+            await update.message.reply_text("फ़ॉरवर्डेड मैसेज से फ़ाइल ID प्राप्त करने में विफल। कृपया पुनः प्रयास करें।", parse_mode='MarkdownV2')
+            context.user_data.pop('current_mode', None)
+            return ConversationHandler.END
+
+    except Exception as e:
+        logger.error(f"Error forwarding secure link file {original_filename} to storage channel: {e}")
+        await update.message.reply_text(f"स्टोरेज चैनल पर फ़ाइल फ़ॉरवर्ड करने में त्रुटि: `{escape_markdown_v2(str(e))}`", parse_mode='MarkdownV2')
+        context.user_data.pop('current_mode', None)
+        return ConversationHandler.END
+
+    # Store file info temporarily in user_data
+    context.user_data['secure_file_info'] = {
+        "telegram_file_id": permanent_telegram_file_id,
+        "original_filename": original_filename,
+        "user_chat_id": user_chat_id,
+        "file_type": file_type,
+        "generated_by": user_id
+    }
+    context.user_data['current_mode'] = SECURE_LINK_PIN_PENDING
+    await update.message.reply_text("फ़ाइल प्राप्त हुई\! अब कृपया उस पिन को भेजें जिसे आप इस लिंक के लिए सेट करना चाहते हैं। यह एक संख्या होनी चाहिए।", parse_mode='MarkdownV2')
+    return SECURE_LINK_PIN_PENDING
+
+async def handle_secure_link_pin_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    await update_user_info(user.id, user.username, user.first_name)
+
+    if context.user_data.get('current_mode') != SECURE_LINK_PIN_PENDING:
+        logger.warning(f"PIN received from {user.id} not in secure link pin pending mode. Ignoring.")
+        await update.message.reply_text("यह पिन दर्ज करने का सही समय नहीं है। कृपया `/securelink` कमांड से शुरू करें।", parse_mode='MarkdownV2')
+        return ConversationHandler.END
+
+    pin = update.message.text
+    if not pin or not pin.isdigit():
+        await update.message.reply_text("अमान्य पिन। कृपया एक संख्यात्मक पिन दर्ज करें।", parse_mode='MarkdownV2')
+        return SECURE_LINK_PIN_PENDING
+
+    secure_file_info = context.user_data.get('secure_file_info')
+    if not secure_file_info:
+        logger.error(f"Secure file info missing for user {user.id} when PIN was received.")
+        await update.message.reply_text("क्षमा करें, आपकी फ़ाइल जानकारी खो गई थी। कृपया `/securelink` से फिर से शुरू करें।", parse_mode='MarkdownV2')
+        return ConversationHandler.END
+
+    # Generate unique token for secure link
+    secure_token = str(uuid.uuid4())
+
+    secure_link_data = {
+        "token": secure_token,
+        "telegram_file_id": secure_file_info["telegram_file_id"],
+        "original_filename": secure_file_info["original_filename"],
+        "user_chat_id": secure_file_info["user_chat_id"],
+        "upload_time": datetime.datetime.now(),
+        "file_type": secure_file_info["file_type"],
+        "generated_by": user.id,
+        "pin": pin # Store the PIN
+    }
+    secure_links_collection.insert_one(secure_link_data)
+    logger.info(f"Secure link for {secure_file_info['original_filename']} (token: {secure_token}) saved with PIN.")
+
+    # Increment user's link count
+    user_links_collection.update_one(
+        {"_id": user.id},
+        {"$inc": {"link_count": 1}},
+        upsert=True
+    )
+
+    # Generate Apps Script URL for secure link
+    apps_script_redirect_url = f"{GOOGLE_APPS_SCRIPT_API_URL}?secure_token={secure_token}"
+    logger.info(f"Generated Apps Script redirect URL for secure link: {apps_script_redirect_url}")
+
+    keyboard = [
+        [InlineKeyboardButton("सुरक्षित फ़ाइल डाउनलोड करें", url=apps_script_redirect_url)],
+        [InlineKeyboardButton("कॉपी लिंक", callback_data=f"copy_secure_link_{secure_token}")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        "आपकी पिन-सुरक्षित फ़ाइल लिंक जनरेट हो गई है\\!\n"
+        "यह लिंक स्थायी है\\. आगे बढ़ने और एक छोटा सा कार्य पूरा करने के लिए 'सुरक्षित फ़ाइल डाउनलोड करें' पर क्लिक करें:",
+        reply_markup=reply_markup,
+        parse_mode='MarkdownV2'
+    )
+
+    context.user_data.pop('current_mode', None)
+    context.user_data.pop('secure_file_info', None)
+    return ConversationHandler.END
+
+async def verify_secure_link_pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    await update_user_info(user.id, user.username, user.first_name)
+
+    if context.user_data.get('current_mode') != SECURE_LINK_PIN_VERIFICATION:
+        # This state is entered via a deep link. If direct message, ignore.
+        await update.message.reply_text("यह पिन दर्ज करने का सही समय नहीं है। कृपया सुरक्षित लिंक पर क्लिक करके फिर से प्रयास करें।", parse_mode='MarkdownV2')
+        return ConversationHandler.END
+
+    entered_pin = update.message.text
+    secure_token = context.user_data.get('secure_token_for_verification')
+
+    if not secure_token:
+        logger.error(f"Secure token for verification missing for user {user.id}.")
+        await update.message.reply_text("क्षमा करें, सुरक्षा टोकन नहीं मिला। कृपया सुरक्षित लिंक पर फिर से क्लिक करें।", parse_mode='MarkdownV2')
+        context.user_data.pop('current_mode', None)
+        context.user_data.pop('secure_token_for_verification', None)
+        return ConversationHandler.END
+
+    secure_link_data = secure_links_collection.find_one({"token": secure_token})
+
+    if not secure_link_data:
+        await update.message.reply_text("यह लिंक अमान्य या समाप्त हो गया है।", parse_mode='MarkdownV2')
+        logger.warning(f"Invalid or expired secure token {secure_token} for user {user.id}.")
+        context.user_data.pop('current_mode', None)
+        context.user_data.pop('secure_token_for_verification', None)
+        return ConversationHandler.END
+
+    if entered_pin == secure_link_data.get("pin"):
+        telegram_file_id = secure_link_data["telegram_file_id"]
+        original_filename = secure_link_data["original_filename"]
+        file_type = secure_link_data["file_type"]
+
+        try:
+            # Inline कीबोर्ड में केवल 'Join Updates Channel' बटन
+            keyboard = [
+                [InlineKeyboardButton("Join Updates Channel", url=UPDATES_CHANNEL_LINK)]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            escaped_filename = escape_markdown_v2(original_filename)
+
+            caption_text_template = (
+                f"यहाँ आपकी फ़ाइल है: `{escaped_filename}`\n\n"
+                f"कॉपीराइट मुद्दों से बचने के लिए, कृपया इस फ़ाइल को कहीं और फॉरवर्ड करें या डाउनलोड करें। "
+                f"यह फ़ाइल 2 मिनट में ऑटो\-डिलीट हो जाएगी।\n\n"
+                f"⚠️ \\*\\*चेतावनी: इस फ़ाइल को कहीं और फ़ॉरवर्ड कर दें\\*\\* ⚠️"
+            )
+
+            if file_type == "video":
+                caption_text = caption_text_template.replace("यहाँ आपकी फ़ाइल है:", "यहाँ आपकी वीडियो है:")
+                sent_msg = await update.message.reply_video(
+                    video=telegram_file_id,
+                    caption=caption_text,
+                    filename=original_filename,
+                    parse_mode='MarkdownV2',
+                    reply_markup=reply_markup
+                )
+            elif file_type == "photo":
+                sent_msg = await update.message.reply_photo(
+                    photo=telegram_file_id,
+                    caption=caption_text_template,
+                    filename=original_filename,
+                    parse_mode='MarkdownV2',
+                    reply_markup=reply_markup
+                )
+            else:
+                sent_msg = await update.message.reply_document(
+                    document=telegram_file_id,
+                    caption=caption_text_template,
+                    filename=original_filename,
+                    parse_mode='MarkdownV2',
+                    reply_markup=reply_markup
+                )
+            logger.info(f"Secure file {original_filename} sent to user {user.id} after PIN verification.")
+
+            # 2 मिनट बाद फ़ाइल ऑटो-डिलीट करें
+            await asyncio.sleep(120)
+            try:
+                await context.bot.delete_message(chat_id=update.message.chat_id, message_id=sent_msg.message_id)
+                logger.info(f"Auto-deleted secure file message {sent_msg.message_id} for user {user.id}.")
+            except Exception as e:
+                logger.warning(f"Could not auto-delete secure file message {sent_msg.message_id} for user {user.id}: {e}")
+
+        except Exception as e:
+            logger.error(f"Error sending secure file {original_filename} to user {user.id}: {e}")
+            await update.message.reply_text(f"क्षमा करें, फ़ाइल नहीं भेजी जा सकी। एक त्रुटि हुई: `{escape_markdown_v2(str(e))}`", parse_mode='MarkdownV2')
+        finally:
+            # Delete the secure link from DB after successful delivery or error
+            secure_links_collection.delete_one({"token": secure_token})
+            logger.info(f"Secure link {secure_token} deleted from MongoDB after one-time use.")
+
+    else:
+        await update.message.reply_text("गलत पिन। कृपया पुनः प्रयास करें।", parse_mode='MarkdownV2')
+        return SECURE_LINK_PIN_VERIFICATION # Stay in PIN verification state
+
+    context.user_data.pop('current_mode', None)
+    context.user_data.pop('secure_token_for_verification', None)
+    return ConversationHandler.END
+
+
+async def cancel_secure_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    await update_user_info(user.id, user.username, user.first_name)
+    logger.info(f"Secure link generation cancelled by {user.id}")
+
+    context.user_data.pop('current_mode', None)
+    context.user_data.pop('secure_file_info', None) # Clear any pending file info
+
+    if update.callback_query:
+        await update.callback_query.answer("सुरक्षित लिंक जनरेशन रद्द कर दिया गया।")
+        await update.callback_query.message.reply_text("सुरक्षित लिंक जनरेशन रद्द कर दिया गया।")
+    else:
+        await update.message.reply_text("सुरक्षित लिंक जनरेशन रद्द कर दिया गया।")
+
+    return ConversationHandler.END
+
 
 def main() -> None:
     required_env_vars = ["TELEGRAM_BOT_TOKEN", "MONGO_URI", "PUBLIC_CHANNEL_USERNAME", "PUBLIC_CHANNEL_ID", "GOOGLE_APPS_SCRIPT_API_URL", "ADMIN_USER_ID"]
@@ -902,6 +1261,7 @@ def main() -> None:
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(help_command, pattern="^help_command$"))
+    application.add_handler(CommandHandler("help", help_command)) # Added CommandHandler for /help
     application.add_handler(CallbackQueryHandler(back_to_welcome, pattern="^back_to_welcome$"))
     application.add_handler(CommandHandler("link", link_command))
 
@@ -919,11 +1279,37 @@ def main() -> None:
     )
     application.add_handler(batch_conv_handler)
 
-    # This MessageHandler will only trigger if current_mode is 'single_file_pending' or 'batch_file_pending'
+    # Secure Link Conversation Handler
+    secure_link_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("securelink", secure_link_start),
+                      MessageHandler(filters.Regex(r'^/start secure_download_.*'), start)], # Handle deep link for secure downloads
+        states={
+            SECURE_LINK_FILE_PENDING: [
+                MessageHandler(filters.ATTACHMENT, handle_secure_link_file_received),
+                CommandHandler("cancel", cancel_secure_link)
+            ],
+            SECURE_LINK_PIN_PENDING: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_secure_link_pin_received),
+                CommandHandler("cancel", cancel_secure_link)
+            ],
+            SECURE_LINK_PIN_VERIFICATION: [ # State for verifying PIN from deep link redirection
+                MessageHandler(filters.TEXT & ~filters.COMMAND, verify_secure_link_pin),
+                CommandHandler("cancel", cancel_secure_link) # Allow cancellation during pin entry
+            ]
+        },
+        fallbacks=[CommandHandler("cancel", cancel_secure_link)],
+    )
+    application.add_handler(secure_link_conv_handler)
+
+
+    # This MessageHandler will only trigger if current_mode is 'single_file_pending' or 'batch_file_pending' or SECURE_LINK_FILE_PENDING
     # Any other attachment or text message will be handled by the next MessageHandler
     application.add_handler(MessageHandler(filters.ATTACHMENT, handle_file))
     # Add a handler for any text messages that are not commands
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text("फ़ाइल लिंक जनरेट करने के लिए, कृपया `/link` या `/batch` कमांड का उपयोग करें।", parse_mode='MarkdownV2'), None))
+    # This handler needs to be aware of conversation states too.
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text(
+        "फ़ाइल लिंक जनरेट करने के लिए, कृपया `/link`, `/batch` या `/securelink` कमांड का उपयोग करें। यदि आप एक सुरक्षित फ़ाइल का पिन दर्ज कर रहे हैं, तो कृपया केवल पिन भेजें।", parse_mode='MarkdownV2'
+    ), None))
 
 
     # New command handlers
@@ -935,6 +1321,7 @@ def main() -> None:
     # New CallbackQueryHandler for copy link buttons
     application.add_handler(CallbackQueryHandler(copy_link_callback, pattern="^copy_link_.*"))
     application.add_handler(CallbackQueryHandler(copy_link_callback, pattern="^copy_batch_link_.*"))
+    application.add_handler(CallbackQueryHandler(copy_link_callback, pattern="^copy_secure_link_.*")) # Added secure link copy handler
 
     # Add InlineQueryHandler
     application.add_handler(InlineQueryHandler(inline_query_handler))
@@ -945,4 +1332,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
