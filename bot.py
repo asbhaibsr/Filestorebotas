@@ -31,7 +31,7 @@ PUBLIC_CHANNEL_ID = int(os.getenv("PUBLIC_CHANNEL_ID"))
 UPDATES_CHANNEL_LINK = "https://t.me/asbhai_bsr" # आपका अपडेट चैनल लिंक
 
 # **महत्वपूर्ण:** अपनी Google Apps Script वेब ऐप का URL यहां डालें
-GOOGLE_APPS_SCRIPT_API_URL = os.getenv("GOOGLE_APPS_SCRIPT_API_URL", "https://script.google.com/macros/s/AKfycbwDqKLE1bZjwBcNT8wDA2SlKs821Gq7bhea8JOzgiFPyGuATAKXWY_LtvOwlFwL9n6w/exec") # Example URL, replace with your actual URL
+GOOGLE_APPS_SCRIPT_API_URL = os.getenv("GOOGLE_APPS_SCRIPT_API_URL", "https://script.google.com/macros/s/AKfycbwDqKLE1bZjwBcNT8wDA2SlKs82n6w/exec") # Example URL, replace with your actual URL
 
 # Start Photo URL for the bot (leave empty if not needed, or add your photo URL)
 START_PHOTO_URL = os.getenv("START_PHOTO_URL", "") # <-- यहां अपनी बॉट फोटो का URL डालें
@@ -104,6 +104,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             logger.info(f"Secure download deep link received: {secure_token}")
             await update.message.reply_text("कृपया इस सुरक्षित फ़ाइल को डाउनलोड करने के लिए पिन दर्ज करें।", parse_mode='MarkdownV2')
             context.user_data['secure_token_for_verification'] = secure_token
+            context.user_data['current_mode'] = SECURE_LINK_PIN_VERIFICATION # Set current_mode for state management
             return SECURE_LINK_PIN_VERIFICATION # Enter state for PIN verification
         elif param.startswith("download_batch_"):
             # यह तब होता है जब यूजर ब्लॉगर पेज पर बैच सत्यापन के बाद वापस बॉट पर रीडायरेक्ट होता है।
@@ -125,9 +126,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                         telegram_file_id = file_data["telegram_file_id"]
                         original_filename = file_data["original_filename"]
                         try:
-                            # Inline कीबोर्ड में केवल 'Join Updates Channel' बटन
+                            # Inline कीबोर्ड में 'Join Updates Channel' और 'How to Download File' बटन
                             keyboard = [
-                                [InlineKeyboardButton("Join Updates Channel", url=UPDATES_CHANNEL_LINK)] # नया बटन
+                                [InlineKeyboardButton("Join Updates Channel", url=UPDATES_CHANNEL_LINK)],
+                                [InlineKeyboardButton("How to Download File", url="https://t.me/asbhai_bsr")] # नया बटन
                             ]
                             reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -189,8 +191,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 # बैच को एक बार भेजने के बाद हटा दें ताकि इसे दोबारा एक्सेस न किया जा सके
                 # Note: This will make the batch link unusable after one successful download.
                 # If you want it to be permanently downloadable, remove this line.
-                batches_collection.delete_one({"_id": batch_id})
-                logger.info(f"Batch {batch_id} deleted from MongoDB after sending.")
+                # batches_collection.delete_one({"_id": batch_id}) # इसे हटा दिया गया है ताकि बैच स्थायी रहे
+                logger.info(f"Batch {batch_id} sent.")
                 return ConversationHandler.END # End conversation state if any
             else:
                 logger.warning(f"Invalid or expired batch token {batch_id} requested by user {user.id} after verification.")
@@ -207,9 +209,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 telegram_file_id = file_data["telegram_file_id"]
                 original_filename = file_data["original_filename"]
                 try:
-                    # Inline कीबोर्ड में केवल 'Join Updates Channel' बटन
+                    # Inline कीबोर्ड में 'Join Updates Channel' और 'How to Download File' बटन
                     keyboard = [
-                        [InlineKeyboardButton("Join Updates Channel", url=UPDATES_CHANNEL_LINK)] # नया बटन
+                        [InlineKeyboardButton("Join Updates Channel", url=UPDATES_CHANNEL_LINK)],
+                        [InlineKeyboardButton("How to Download File", url="https://t.me/asbhai_bsr")] # नया बटन
                     ]
                     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -304,7 +307,8 @@ async def send_welcome_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
     keyboard = [
         [InlineKeyboardButton("Updates Channel", url=UPDATES_CHANNEL_LINK)],
-        [InlineKeyboardButton("Help", callback_data="help_command")]
+        [InlineKeyboardButton("Help", callback_data="help_command")],
+        [InlineKeyboardButton("How to Download File", url="https://t.me/asbhai_bsr")] # वेलकम मैसेज में भी ये बटन
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -365,12 +369,15 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         chat_id = update.callback_query.message.chat_id
         message_id = update.callback_query.message.message_id
 
+        keyboard = [[InlineKeyboardButton("पीछे", callback_data="back_to_welcome")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
         await context.bot.edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
             text=escaped_help_text, # Use escaped text
             parse_mode='MarkdownV2',
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("पीछे", callback_data="back_to_welcome")]])
+            reply_markup=reply_markup
         )
         logger.info("Help message sent via callback edit.")
     else:
@@ -392,9 +399,11 @@ async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         logger.info(f"Cleared pending batch for user {user.id} when /link was used.")
 
     # Reset secure link conversation if active
-    if context.user_data.get('current_mode') in [SECURE_LINK_FILE_PENDING, SECURE_LINK_PIN_PENDING]:
+    if context.user_data.get('current_mode') in [SECURE_LINK_FILE_PENDING, SECURE_LINK_PIN_PENDING, SECURE_LINK_PIN_VERIFICATION]:
         context.user_data.pop('current_mode', None)
         context.user_data.pop('secure_file_info', None)
+        context.user_data.pop('secure_token_for_verification', None)
+
 
     # Set current_mode to 'single_file_pending' to allow file handling only after /link
     context.user_data['current_mode'] = 'single_file_pending'
@@ -413,9 +422,10 @@ async def batch_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Con
         batch_files_in_progress[user_id] = []
 
     # Reset secure link conversation if active
-    if context.user_data.get('current_mode') in [SECURE_LINK_FILE_PENDING, SECURE_LINK_PIN_PENDING]:
+    if context.user_data.get('current_mode') in [SECURE_LINK_FILE_PENDING, SECURE_LINK_PIN_PENDING, SECURE_LINK_PIN_VERIFICATION]:
         context.user_data.pop('current_mode', None)
         context.user_data.pop('secure_file_info', None)
+        context.user_data.pop('secure_token_for_verification', None)
 
 
     # Set current_mode to 'batch_file_pending' to allow file handling only after /batch
@@ -569,7 +579,8 @@ async def generate_batch_links(update: Update, context: ContextTypes.DEFAULT_TYP
 
     keyboard = [
         [InlineKeyboardButton("बैच फ़ाइलें डाउनलोड करें", url=apps_script_redirect_url)],
-        [InlineKeyboardButton("कॉपी लिंक", callback_data=f"copy_batch_link_{batch_id}")] # नया कॉपी लिंक बटन
+        [InlineKeyboardButton("कॉपी लिंक", callback_data=f"copy_batch_link_{batch_id}")], # नया कॉपी लिंक बटन
+        [InlineKeyboardButton("How to Download File", url="https://t.me/asbhai_bsr")] # नया बटन
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -708,7 +719,8 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     keyboard = [
         [InlineKeyboardButton("फ़ाइल डाउनलोड करें", url=apps_script_redirect_url)],
-        [InlineKeyboardButton("कॉपी लिंक", callback_data=f"copy_link_{permanent_token}")] # नया कॉपी लिंक बटन
+        [InlineKeyboardButton("कॉपी लिंक", callback_data=f"copy_link_{permanent_token}")], # नया कॉपी लिंक बटन
+        [InlineKeyboardButton("How to Download File", url="https://t.me/asbhai_bsr")] # नया बटन
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -1107,7 +1119,8 @@ async def handle_secure_link_pin_received(update: Update, context: ContextTypes.
 
     keyboard = [
         [InlineKeyboardButton("सुरक्षित फ़ाइल डाउनलोड करें", url=apps_script_redirect_url)],
-        [InlineKeyboardButton("कॉपी लिंक", callback_data=f"copy_secure_link_{secure_token}")]
+        [InlineKeyboardButton("कॉपी लिंक", callback_data=f"copy_secure_link_{secure_token}")],
+        [InlineKeyboardButton("How to Download File", url="https://t.me/asbhai_bsr")] # नया बटन
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -1126,9 +1139,13 @@ async def verify_secure_link_pin(update: Update, context: ContextTypes.DEFAULT_T
     user = update.effective_user
     await update_user_info(user.id, user.username, user.first_name)
 
+    # Check if the user is in the correct state for PIN verification
     if context.user_data.get('current_mode') != SECURE_LINK_PIN_VERIFICATION:
-        # This state is entered via a deep link. If direct message, ignore.
+        # This state is typically entered via a deep link. If direct message, ignore or guide.
         await update.message.reply_text("यह पिन दर्ज करने का सही समय नहीं है। कृपया सुरक्षित लिंक पर क्लिक करके फिर से प्रयास करें।", parse_mode='MarkdownV2')
+        # Reset user data to avoid lingering states if they sent random text
+        context.user_data.pop('current_mode', None)
+        context.user_data.pop('secure_token_for_verification', None)
         return ConversationHandler.END
 
     entered_pin = update.message.text
@@ -1156,9 +1173,10 @@ async def verify_secure_link_pin(update: Update, context: ContextTypes.DEFAULT_T
         file_type = secure_link_data["file_type"]
 
         try:
-            # Inline कीबोर्ड में केवल 'Join Updates Channel' बटन
+            # Inline कीबोर्ड में 'Join Updates Channel' और 'How to Download File' बटन
             keyboard = [
-                [InlineKeyboardButton("Join Updates Channel", url=UPDATES_CHANNEL_LINK)]
+                [InlineKeyboardButton("Join Updates Channel", url=UPDATES_CHANNEL_LINK)],
+                [InlineKeyboardButton("How to Download File", url="https://t.me/asbhai_bsr")] # नया बटन
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -1210,9 +1228,11 @@ async def verify_secure_link_pin(update: Update, context: ContextTypes.DEFAULT_T
             logger.error(f"Error sending secure file {original_filename} to user {user.id}: {e}")
             await update.message.reply_text(f"क्षमा करें, फ़ाइल नहीं भेजी जा सकी। एक त्रुटि हुई: `{escape_markdown_v2(str(e))}`", parse_mode='MarkdownV2')
         finally:
-            # Delete the secure link from DB after successful delivery or error
-            secure_links_collection.delete_one({"token": secure_token})
-            logger.info(f"Secure link {secure_token} deleted from MongoDB after one-time use.")
+            # Secure link will *not* be deleted from DB after successful delivery to make it permanent.
+            # If you want it to be one-time use, uncomment the line below:
+            # secure_links_collection.delete_one({"token": secure_token})
+            # logger.info(f"Secure link {secure_token} deleted from MongoDB after one-time use.")
+            logger.info(f"Secure link {secure_token} delivered to user {user.id}.")
 
     else:
         await update.message.reply_text("गलत पिन। कृपया पुनः प्रयास करें।", parse_mode='MarkdownV2')
@@ -1230,6 +1250,7 @@ async def cancel_secure_link(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     context.user_data.pop('current_mode', None)
     context.user_data.pop('secure_file_info', None) # Clear any pending file info
+    context.user_data.pop('secure_token_for_verification', None) # Clear any pending verification info
 
     if update.callback_query:
         await update.callback_query.answer("सुरक्षित लिंक जनरेशन रद्द कर दिया गया।")
@@ -1286,7 +1307,11 @@ def main() -> None:
         states={
             SECURE_LINK_FILE_PENDING: [
                 MessageHandler(filters.ATTACHMENT, handle_secure_link_file_received),
-                CommandHandler("cancel", cancel_secure_link)
+                CommandHandler("cancel", cancel_secure_link),
+                 # Allow text messages in this state (e.g., if user sends random text)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text(
+                    "फ़ाइल भेजें, कमांड नहीं। या सुरक्षित लिंक जनरेशन रद्द करने के लिए `/cancel` का उपयोग करें।", parse_mode='MarkdownV2'
+                ))
             ],
             SECURE_LINK_PIN_PENDING: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_secure_link_pin_received),
