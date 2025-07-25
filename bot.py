@@ -485,29 +485,42 @@ async def handle_batch_file_received(update: Update, context: ContextTypes.DEFAU
 
     file = None
     file_type = ""
+    original_filename = "" # Initialize original_filename
+
     if update.message.document:
         file = update.message.document
         file_type = "document"
         if file.file_name and file.file_name.lower().endswith('.apk'):
             file_type = "apk" # Specific type for APK
+        original_filename = file.file_name if file.file_name else f"unnamed_{file_type}"
     elif update.message.video:
         file = update.message.video
         file_type = "video"
+        original_filename = file.file_name if file.file_name else f"unnamed_{file_type}"
     elif update.message.photo: # Handle photos in batch too
         file = update.message.photo[-1] # Get the largest photo size
         file_type = "photo"
+        # Photos don't have file_name. Generate a generic one or use file_unique_id
+        original_filename = f"photo_{file.file_unique_id}.jpg"
     elif update.message.voice: # Handle voice messages
         file = update.message.voice
         file_type = "voice"
+        original_filename = file.file_name if file.file_name else f"voice_message.ogg"
     elif update.message.audio: # Handle audio files (songs)
         file = update.message.audio
         file_type = "audio"
+        original_filename = file.file_name if file.file_name else f"audio_file.mp3"
+        if file.title:
+            original_filename = f"{file.title}.mp3"
+        elif file.file_name: # Fallback to file_name if title is not present (though less common for audio)
+            original_filename = file.file_name
+        else:
+            original_filename = f"audio_{file.file_unique_id}.mp3"
     else:
         logger.info(f"Unsupported file type received from {user.id} during batch.")
         await update.message.reply_text("कृपया एक डॉक्यूमेंट, वीडियो, फोटो, ऑडियो या APK भेजें। अन्य फ़ाइल प्रकार बैच के लिए समर्थित नहीं हैं।")
         return SENDING_BATCH_FILES # Stay in the batch state
 
-    original_filename = file.file_name if file.file_name else f"unnamed_{file_type}"
     user_chat_id = update.message.chat_id
 
     try:
@@ -671,33 +684,46 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return ConversationHandler.END # End conversation
 
     logger.info(f"Single file received from {user.id}")
+
     file = None
     file_type = ""
+    original_filename = "" # Initialize original_filename
+
     if update.message.document:
         file = update.message.document
         file_type = "document"
         if file.file_name and file.file_name.lower().endswith('.apk'):
             file_type = "apk" # Specific type for APK
+        original_filename = file.file_name if file.file_name else f"unnamed_{file_type}"
     elif update.message.video:
         file = update.message.video
         file_type = "video"
+        original_filename = file.file_name if file.file_name else f"unnamed_{file_type}"
     elif update.message.photo:
         # For photos, Telegram provides multiple sizes. We usually take the largest.
         file = update.message.photo[-1]
         file_type = "photo"
+        original_filename = f"photo_{file.file_unique_id}.jpg" # Photos don't have file_name.
     elif update.message.voice: # Added for voice messages
         file = update.message.voice
         file_type = "voice"
+        original_filename = file.file_name if file.file_name else f"voice_message.ogg"
     elif update.message.audio: # Added for audio files (songs)
         file = update.message.audio
         file_type = "audio"
+        original_filename = file.file_name if file.file_name else f"audio_file.mp3"
+        if file.title:
+            original_filename = f"{file.title}.mp3"
+        elif file.file_name:
+            original_filename = file.file_name
+        else:
+            original_filename = f"audio_{file.file_unique_id}.mp3"
     else:
         logger.info(f"Unsupported file type received from {user.id} in single mode.")
         await update.message.reply_text("कृपया एक डॉक्यूमेंट, वीडियो, फोटो, ऑडियो या APK फ़ाइल भेजें।")
         context.user_data.pop('current_mode', None) # Reset mode
         return ConversationHandler.END # End conversation
 
-    original_filename = file.file_name if file.file_name else f"unnamed_{file_type}"
     user_chat_id = update.message.chat_id
 
     try:
@@ -788,7 +814,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         parse_mode='MarkdownV2'
     )
     context.user_data.pop('current_mode', None)
-    return ConversationHandler.END # End conversation
+    return ConversationHandler.END
 
 # --- New Callback Handler for Copy Link ---
 async def copy_link_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1086,29 +1112,41 @@ async def handle_secure_link_file_received(update: Update, context: ContextTypes
 
     file = None
     file_type = ""
+    original_filename = "" # Initialize original_filename
+
     if update.message.document:
         file = update.message.document
         file_type = "document"
         if file.file_name and file.file_name.lower().endswith('.apk'):
             file_type = "apk"
+        original_filename = file.file_name if file.file_name else f"unnamed_{file_type}"
     elif update.message.video:
         file = update.message.video
         file_type = "video"
+        original_filename = file.file_name if file.file_name else f"unnamed_{file_type}"
     elif update.message.photo:
         file = update.message.photo[-1]
         file_type = "photo"
+        original_filename = f"photo_{file.file_unique_id}.jpg" # Photos don't have file_name.
     elif update.message.voice: # Added for voice messages
         file = update.message.voice
         file_type = "voice"
+        original_filename = file.file_name if file.file_name else f"voice_message.ogg"
     elif update.message.audio: # Added for audio files (songs)
         file = update.message.audio
         file_type = "audio"
+        original_filename = file.file_name if file.file_name else f"audio_file.mp3"
+        if file.title:
+            original_filename = f"{file.title}.mp3"
+        elif file.file_name:
+            original_filename = file.file_name
+        else:
+            original_filename = f"audio_{file.file_unique_id}.mp3"
     else:
         logger.info(f"Unsupported file type received from {user.id} for secure link.")
         await update.message.reply_text("कृपया एक डॉक्यूमेंट, वीडियो, फोटो, ऑडियो या APK फ़ाइल भेजें। अन्य फ़ाइल प्रकार समर्थित नहीं हैं।", parse_mode='MarkdownV2')
         return SECURE_LINK_FILE_PENDING
 
-    original_filename = file.file_name if file.file_name else f"unnamed_{file_type}"
     user_chat_id = update.message.chat_id
 
     try:
@@ -1477,4 +1515,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
