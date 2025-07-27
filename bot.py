@@ -31,7 +31,7 @@ PUBLIC_CHANNEL_ID = int(os.getenv("PUBLIC_CHANNEL_ID"))
 UPDATES_CHANNEL_LINK = "https://t.me/asbhai_bsr" # आपका अपडेट चैनल लिंक
 
 # **महत्वपूर्ण:** अपनी Google Apps Script वेब ऐप का URL यहां डालें
-GOOGLE_APPS_SCRIPT_API_URL = os.getenv("GOOGLE_APPS_SCRIPT_API_URL", "https://script.google.com/macros/s/AKfycbwDqKLE1bZjwBcNT8wDA2SlKs82n6w/exec") # Example URL, replace with your actual URL
+GOOGLE_APPS_SCRIPT_API_URL = os.getenv("GOOGLE_APPS_SCRIPT_API_URL", "https://script.google.com/macros/s/AKfycbwDqKLE1bZjwBcNT8wDA2SlKs821Gq7bhea8JOygiHfyPyGuATAKXWY_LtvOwlFwL9n6w/exec") # Example URL, replace with your actual URL
 
 # Start Photo URL for the bot (leave empty if not needed, or add your photo URL)
 START_PHOTO_URL = os.getenv("START_PHOTO_URL", "") # <-- यहां अपनी बॉट फोटो का URL डालें
@@ -86,6 +86,7 @@ async def update_user_info(user_id: int, username: str, first_name: str):
 # --- MarkdownV2 escaping helper ---
 def escape_markdown_v2(text: str) -> str:
     # Telegram MarkdownV2 special characters that need to be escaped
+    # Added '-' to the escape_chars list as it was causing an error
     escape_chars = r'_*[]()~`>#+-=|{}.!\ ' # Space also needs to be escaped for pre/code blocks
     # Escape each special character with a backslash
     return ''.join(['\\' + char if char in escape_chars else char for char in text])
@@ -147,7 +148,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: # Ch
                             caption_text_template = (
                                 f"यहाँ आपकी फ़ाइल है: `{escaped_filename}`\n\n"
                                 f"कॉपीराइट मुद्दों से बचने के लिए, कृपया इस फ़ाइल को कहीं और फॉरवर्ड करें या डाउनलोड करें। "
-                                f"यह फ़ाइल 2 मिनट में ऑटो\-डिलीट हो जाएगी।\n\n"
+                                f"यह फ़ाइल 2 मिनट में ऑटो\\-डिलीट हो जाएगी।\n\n"
                                 f"⚠️ \\*\\*चेतावनी: इस फ़ाइल को कहीं और फ़ॉरवर्ड कर दें\\*\\* ⚠️" # नया वॉर्निंग टेक्स्ट
                             )
 
@@ -232,7 +233,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: # Ch
                     caption_text_template = (
                         f"यहाँ आपकी फ़ाइल है: `{escaped_filename}`\n\n"
                         f"कॉपीराइट मुद्दों से बचने के लिए, कृपया इस फ़ाइल को कहीं और फॉरवर्ड करें या डाउनलोड करें। "
-                        f"यह फ़ाइल 2 मिनट में ऑटो\-डिलीट हो जाएगी।\n\n"
+                        f"यह फ़ाइल 2 मिनट में ऑटो\\-डिलीट हो जाएगी।\n\n"
                         f"⚠️ \\*\\*चेतावनी: इस फ़ाइल को कहीं और फ़ॉरवर्ड कर दें\\*\\* ⚠️" # नया वॉर्निंग टेक्स्ट
                     )
 
@@ -382,10 +383,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "➡️ /start \\- स्वागत संदेश प्राप्त करें और बॉट को रीसेट करें।\n"
         "➡️ /link \\- एक एकल फ़ाइल के लिए साझा करने योग्य लिंक जनरेट करें।\n"
         "➡️ /batch \\- एक साथ कई फ़ाइलों के लिए एक साझा करने योग्य लिंक जनरेट करें।\n"
-        "➡️ /securelink \\- एक पिन-सुरक्षित लिंक जनरेट करें। इस लिंक को एक्सेस करने के लिए एक पिन की आवश्यकता होगी।\n"
+        "➡️ /securelink \\- एक पिन\\-सुरक्षित लिंक जनरेट करें। इस लिंक को एक्सेस करने के लिए एक पिन की आवश्यकता होगी।\n"
         "➡️ /mylink \\- आपके द्वारा जनरेट की गई कुल लिंक्स की संख्या देखें।\n\n"
         "**मैं फ़ाइलों को कहाँ स्टोर करता हूँ\\?**\n"
-        "मैं आपकी फ़ाइलों को सुरक्षित रूप से एक निजी टेलीग्राम चैनल में स्टोर करता हूँ, और लिंक के माध्यम से पहुँच की अनुमति देता हूँ। फ़ाइलें 2 मिनट के बाद ऑटो-डिलीट हो जाएंगी, इसलिए उन्हें कहीं और फॉरवर्ड करना सुनिश्चित करें।\n\n"
+        "मैं आपकी फ़ाइलों को सुरक्षित रूप से एक निजी टेलीग्राम चैनल में स्टोर करता हूँ, और लिंक के माध्यम से पहुँच की अनुमति देता हूँ। फ़ाइलें 2 मिनट के बाद ऑटो\\-डिलीट हो जाएंगी, इसलिए उन्हें कहीं और फॉरवर्ड करना सुनिश्चित करें।\n\n"
         "यदि आपके कोई और प्रश्न हैं, तो कृपया Updates Channel पर संपर्क करें।"
     )
     # Using escape_markdown_v2 on the whole string is generally safer if it contains varying user-generated content or complex formatting.
@@ -466,7 +467,7 @@ async def batch_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     # Manual escaping for MarkdownV2 specific characters in the static text
     await update.message.reply_text(
-        "ठीक है, मुझे एक\-एक करके फ़ाइलें \\(डॉक्यूमेंट, वीडियो, फोटो, ऑडियो या APK\\) भेजें\\. "
+        "ठीक है, मुझे एक\\-एक करके फ़ाइलें \\(डॉक्यूमेंट, वीडियो, फोटो, ऑडियो या APK\\) भेजें\\. "
         "प्रत्येक फ़ाइल भेजने के बाद मैं आपको सूचित करूँगा\\.\n\n"
         "जब आप सभी फ़ाइलें भेज दें, तो 'लिंक जनरेट करें' बटन पर क्लिक करें\\. यदि आप रद्द करना चाहते हैं तो 'रद्द करें' दबाएं\\.",
         reply_markup=reply_markup,
@@ -1109,7 +1110,6 @@ async def secure_link_start(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         logger.info(f"Cleared pending batch for user {user.id} when /securelink was used.")
 
     context.user_data['current_mode'] = SECURE_LINK_FILE_PENDING
-    # यहाँ पर बदलाव किया गया है: ( और ) को एस्केप किया गया है।
     await update.message.reply_text("ठीक है, कृपया मुझे वह फ़ाइल \\(डॉक्यूमेंट, वीडियो, फोटो, ऑडियो या APK\\) भेजें जिसे आप पिन से सुरक्षित करना चाहते हैं।", parse_mode='MarkdownV2')
     return SECURE_LINK_FILE_PENDING
 
@@ -1285,8 +1285,9 @@ async def handle_secure_link_pin_received(update: Update, context: ContextTypes.
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
+        # यहाँ पर बदलाव किया गया है: 'पिन-सुरक्षित' को 'पिन\-सुरक्षित' में बदला गया है।
         await update.message.reply_text(
-            "आपकी पिन-सुरक्षित फ़ाइल लिंक जनरेट हो गई है\\!\n"
+            "आपकी पिन\\-सुरक्षित फ़ाइल लिंक जनरेट हो गई है\\!\n"
             "यह लिंक स्थायी है\\. आगे बढ़ने और एक छोटा सा कार्य पूरा करने के लिए 'सुरक्षित फ़ाइल डाउनलोड करें' पर क्लिक करें:",
             reply_markup=reply_markup,
             parse_mode='MarkdownV2'
@@ -1344,7 +1345,7 @@ async def verify_secure_link_pin(update: Update, context: ContextTypes.DEFAULT_T
             caption_text_template = (
                 f"यहाँ आपकी फ़ाइल है: `{escaped_filename}`\n\n"
                 f"कॉपीराइट मुद्दों से बचने के लिए, कृपया इस फ़ाइल को कहीं और फॉरवर्ड करें या डाउनलोड करें। "
-                f"यह फ़ाइल 2 मिनट में ऑटो\-डिलीट हो जाएगी।\n\n"
+                f"यह फ़ाइल 2 मिनट में ऑटो\\-डिलीट हो जाएगी।\n\n"
                 f"⚠️ \\*\\*चेतावनी: इस फ़ाइल को कहीं और फ़ॉरवर्ड कर दें\\*\\* ⚠️"
             )
 
