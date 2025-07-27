@@ -1109,7 +1109,8 @@ async def secure_link_start(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         logger.info(f"Cleared pending batch for user {user.id} when /securelink was used.")
 
     context.user_data['current_mode'] = SECURE_LINK_FILE_PENDING
-    await update.message.reply_text("ठीक है, कृपया मुझे वह फ़ाइल (डॉक्यूमेंट, वीडियो, फोटो, ऑडियो या APK) भेजें जिसे आप पिन से सुरक्षित करना चाहते हैं।", parse_mode='MarkdownV2')
+    # यहाँ पर बदलाव किया गया है: ( और ) को एस्केप किया गया है।
+    await update.message.reply_text("ठीक है, कृपया मुझे वह फ़ाइल \\(डॉक्यूमेंट, वीडियो, फोटो, ऑडियो या APK\\) भेजें जिसे आप पिन से सुरक्षित करना चाहते हैं।", parse_mode='MarkdownV2')
     return SECURE_LINK_FILE_PENDING
 
 async def handle_secure_link_file_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
