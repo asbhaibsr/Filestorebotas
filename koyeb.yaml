@@ -1,0 +1,31 @@
+name: advanced-telegram-bot
+region: was
+services:
+  - name: bot
+    type: web
+    instance_type: free
+    env:
+      - key: BOT_TOKEN
+        value: "YOUR_BOT_TOKEN"
+      - key: API_ID
+        value: "YOUR_API_ID"
+      - key: API_HASH
+        value: "YOUR_API_HASH"
+      - key: MONGODB_URI
+        value: "YOUR_MONGODB_URI"
+      - key: CHANNEL_ID
+        value: "YOUR_CHANNEL_ID"
+      - key: WEBHOOK
+        value: "true"
+    ports:
+      - port: 8080
+    routes:
+      - path: /
+    healthcheck:
+      path: /health
+      interval: 60
+    build:
+      dockerfile: Dockerfile
+    scalings:
+      min: 1
+      max: 1
