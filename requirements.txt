@@ -1,5 +1,9 @@
-Flask
-python-telegram-bot
-pymongo
-dnspython
-requests
+pyrogram==2.0.106
+motor==3.3.2
+pymongo==4.6.1
+humanize==4.9.0
+aiohttp==3.9.1
+python-dotenv==1.0.0
+uvicorn==0.24.0
+fastapi==0.104.1
+pytz==2023.3
