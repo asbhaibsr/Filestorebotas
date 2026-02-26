@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - API_ID=${API_ID}
+      - API_HASH=${API_HASH}
+      - MONGODB_URI=mongodb://mongodb:27017
+      - CHANNEL_ID=${CHANNEL_ID}
+      - WEBHOOK=false
+    depends_on:
+      - mongodb
+    volumes:
+      - ./downloads:/tmp/downloads
+      - ./thumbnails:/tmp/thumbnails
+    restart: unless-stopped
+
+  mongodb:
+    image: mongo:6.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    restart: unless-stopped
+
+volumes:
+  mongodb_data:
